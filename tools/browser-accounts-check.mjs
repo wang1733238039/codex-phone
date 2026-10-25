@@ -31,8 +31,41 @@ try {
   const inviteLink = await admin.locator('#admin-invite-link').inputValue();
   assert.match(inviteLink, /#invite=/);
   await admin.screenshot({ path: join(artifacts, 'phone-admin-invite.png') });
+  await member.goto(origin);
+  await member.locator('#auth-register').waitFor({ state: 'visible' });
+  await member.locator('#username').fill('never-registered');
+  await member.locator('#password').fill('test-admin-password');
+  await member.locator('#login-button').click();
+  await member.getByText('账号或密码不正确', { exact: true }).waitFor();
+  await member.evaluate(() => scrollTo(0, 0));
+  await member.screenshot({ path: join(artifacts, 'phone-login.png'), fullPage: true });
+  await member.locator('#auth-register').click();
+  assert.equal(await member.locator('#login-error').isVisible(), false);
+  await member.locator('#registration-form').waitFor({ state: 'visible' });
+  assert.match(await member.locator('#register-help').innerText(), /管理员/);
+  await member.locator('#register-back').click();
+  await member.locator('#login-register').click();
+  await member.locator('#register-invite').fill('invalid-invite');
+  await member.locator('#register-username').fill('phone-member');
+  await member.locator('#register-password').fill('member-test-password');
+  await member.locator('#register-confirm').fill('member-test-password');
+  await member.locator('#register-submit').click();
+  await member.getByText('请粘贴本站有效的邀请码或完整邀请链接；没有邀请码请联系服务管理员', { exact: true }).waitFor();
+  await member.locator('#register-invite').fill(inviteLink);
+  await member.evaluate(() => scrollTo(0, 0));
+  await member.screenshot({ path: join(artifacts, 'phone-register.png'), fullPage: true });
+  for (const [width, height] of [[375, 812], [390, 844], [1440, 1000]]) {
+    await member.setViewportSize({ width, height });
+    assert.equal(await member.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  }
+  await member.setViewportSize({ width: 375, height: 812 });
   await member.goto(inviteLink); await member.locator('#registration-form').waitFor({ state: 'visible' });
+  await member.waitForFunction(() => location.hash === '');
   assert.equal(new URL(member.url()).hash, '', 'invitation is removed from browser URL');
+  assert.equal(await member.locator('#register-invite').inputValue(), new URL(inviteLink).hash.slice(8));
+  await member.locator('#auth-login').click();
+  await member.locator('#auth-register').click();
+  await member.locator('#register-invite').fill(inviteLink);
   await member.locator('#register-username').fill('phone-member');
   await member.locator('#register-password').fill('member-test-password'); await member.locator('#register-confirm').fill('member-test-password');
   await member.locator('#register-submit').click(); await member.locator('#app-view').waitFor({ state: 'visible' });
@@ -97,7 +130,8 @@ try {
   await member.reload(); await member.locator('#app-view').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
   const report = { passed: true, verifiedAt: new Date().toISOString(), pageErrors: errors,
-    checked: ['admin-invitation', 'invite-registration', 'hash-removed', 'private-empty-account', 'member-no-admin-access',
+    checked: ['homepage-login-register-switch', 'unknown-user-with-admin-password', 'manual-invitation-link-entry', 'invalid-invite-feedback',
+      'admin-invitation', 'invite-registration', 'hash-removed', 'private-empty-account', 'member-no-admin-access',
       'own-device-pairing', 'conversation-history', 'renewal-from-existing-expiry', 'expiry-cached-read', 'expiry-draft-allowed',
       'expiry-send-disabled', 'direct-account-create', 'suspension-logout-clears-history', 'restore-login', 'reload-session',
       '375-390-1440-no-overflow'] };

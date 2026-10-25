@@ -20,6 +20,10 @@
       <p class="eyebrow">YOUR WORK, WITH YOU</p>
       <h1>Codex 随行<span>离开电脑，也能继续。</span></h1>
       <p class="login-description">你的会话、进展和下一条指令，<br>在这里接上。</p>
+      <nav class="auth-switch" aria-label="登录与注册">
+        <button id="auth-login" type="button" aria-pressed="true" aria-controls="login-form">登录</button>
+        <button id="auth-register" type="button" aria-pressed="false" aria-controls="registration-form">注册</button>
+      </nav>
       <form id="login-form">
         <label for="username">账号</label>
         <input id="username" name="username" autocomplete="username" value="admin" required maxlength="100">
@@ -27,10 +31,13 @@
         <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="500">
         <p id="login-error" class="error" role="alert" hidden></p>
         <button id="login-button" class="primary" type="submit">登录控制台 <span aria-hidden="true">→</span></button>
+        <p class="auth-help">还没有账号？<button id="login-register" class="auth-link" type="button">注册新账号</button></p>
       </form>
       <form id="registration-form" hidden>
         <h2>创建你的独立账号</h2>
-        <p class="account-note">使用邀请开通。服务期从注册成功开始计算，电脑和会话仅对你可见。</p>
+        <p id="register-help" class="account-note">当前为邀请注册。请先向为你开通服务的管理员获取邀请码或邀请链接，再在这里创建账号。服务期从注册成功开始计算。</p>
+        <label for="register-invite">邀请码或邀请链接</label>
+        <input id="register-invite" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required maxlength="2048" placeholder="粘贴管理员提供的邀请码或完整链接" aria-describedby="register-help">
         <label for="register-username">账号</label>
         <input id="register-username" autocomplete="username" required minlength="3" maxlength="80" pattern="[a-zA-Z0-9][a-zA-Z0-9_.@\-]{2,79}" placeholder="字母、数字或邮箱">
         <label for="register-password">设置密码</label>
@@ -38,7 +45,7 @@
         <label for="register-confirm">确认密码</label>
         <input id="register-confirm" type="password" autocomplete="new-password" required minlength="10" maxlength="128">
         <p id="register-error" class="error" role="alert" hidden></p>
-        <button id="register-submit" class="primary" type="submit">开通并登录</button>
+        <button id="register-submit" class="primary" type="submit">注册并登录</button>
         <button id="register-back" class="text-button full" type="button">已有账号，返回登录</button>
       </form>
       <p class="login-footnote">连接你自己的电脑 · 使用现有 Codex 配置</p>

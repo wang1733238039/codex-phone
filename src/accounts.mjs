@@ -95,12 +95,12 @@ export class Accounts {
     const matches = await verify(password, account?.password_hash || this.dummyHash);
     // Re-read after asynchronous password verification: a concurrent suspension/reset must win.
     const current = account && this.get(account.id);
-    return matches && current?.password_hash === account.password_hash && current.status === 'active' ? current : null;
+    return matches && current && current.password_hash === account.password_hash && current.status === 'active' ? current : null;
   }
   async checkPassword(id, value) {
     const account = this.get(id), matches = await verify(value, account?.password_hash || this.dummyHash);
     const current = this.get(id);
-    return Boolean(matches && current?.password_hash === account.password_hash && current.status === 'active');
+    return Boolean(matches && current && current.password_hash === account.password_hash && current.status === 'active');
   }
   async create(data, actor) {
     const name = username(data.username), hash = await passwordHash(data.password);

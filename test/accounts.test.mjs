@@ -76,6 +76,30 @@ async function fixture(t, extra = {}) {
   return { app, dir, config, origin, admin, client, member, pair, connect, rejected };
 }
 
+test('unknown logins return a generic 401 even when the password matches the administrator', async t => {
+  const f = await fixture(t), client = f.client();
+  for (const username of ['never-created', '', 'x'.repeat(101)]) {
+    const response = await client.request('/api/login', 'POST', { username, password: PASSWORD });
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: '账号或密码不正确' });
+    assert.equal(response.headers.get('set-cookie'), null);
+  }
+  assert.equal(await f.app.accounts.checkPassword('missing-account', PASSWORD), false);
+  assert.equal((await client.request('/api/login', 'POST', { username: 'admin', password: 'incorrect-password' })).status, 401);
+  await client.login('admin');
+});
+
+test('unexpected authentication errors do not expose internal fields', async t => {
+  const f = await fixture(t), client = f.client();
+  const broken = async () => { throw new Error('Internal password_hash database failure'); };
+  f.app.accounts.authenticate = broken; f.app.accounts.register = broken;
+  for (const path of ['/api/login', '/api/register']) {
+    const response = await client.request(path, 'POST', { username: 'unknown-user', password: PASSWORD });
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: '账号服务暂时不可用，请稍后重试' });
+  }
+});
+
 test('independent logins bind sessions to immutable owners; normal users cannot manage accounts', async t => {
   const f = await fixture(t), a = await f.member('member-a'), b = await f.member('member-b');
   assert.notEqual(a.id, b.id);

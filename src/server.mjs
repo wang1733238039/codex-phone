@@ -511,7 +511,9 @@ export function createApp(config) {
       }
       throw new HttpError(404, '找不到此页面');
     } catch (error) {
-      if (!res.headersSent) json(res, error.status || 502, { error: error.message }); else res.end();
+      const authRequest = ['/api/login', '/api/register'].includes(new URL(req.url, 'http://localhost').pathname);
+      const message = authRequest && !error.status ? '账号服务暂时不可用，请稍后重试' : error.message;
+      if (!res.headersSent) json(res, error.status || 502, { error: message }); else res.end();
     }
   });
   server.requestTimeout = 75000; server.headersTimeout = 15000;

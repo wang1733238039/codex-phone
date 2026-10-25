@@ -37,7 +37,7 @@ function showLogin() {
   $('devices-dialog').close(); $('pair-code').textContent = ''; $('pair-result').hidden = true; $('devices-list').replaceChildren();
   state.models = []; state.options.clear(); $('execution-status').textContent = ''; $('queue-panel').hidden = true; $('delivery-status').hidden = true;
   $('app-view').classList.remove('chat-open'); $('chat').hidden = true; $('welcome').hidden = false;
-  $('app-view').hidden = true; $('login-view').hidden = false; $('status-dialog').close(); $('password').value = ''; $('password').focus();
+  $('app-view').hidden = true; $('login-view').hidden = false; $('status-dialog').close(); $('password').value = '';
 }
 async function enterApp(session) {
   state.csrf = session.csrf; state.username = session.username || 'admin'; state.primaryDeviceId = session.primaryDeviceId;

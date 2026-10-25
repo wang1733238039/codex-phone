@@ -2,7 +2,7 @@
 const PhoneAccounts = (() => {
   const $ = id => document.getElementById(id);
   const labels = { active: '使用中', expired: '已到期', disabled: '已停用', deleted: '已删除' };
-  let ctx, account = null, generation = 0, adminSequence = 0, selected = null, nextOffset = null, invitation = '';
+  let ctx, account = null, generation = 0, adminSequence = 0, selected = null, nextOffset = null, registration = false;
   const datetime = value => value == null ? '长期有效' : new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
   const inputTime = value => { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
   function error(id, message) { $(id).textContent = message || ''; $(id).hidden = !message; }
@@ -34,11 +34,35 @@ const PhoneAccounts = (() => {
     $('register-password').value = ''; $('register-confirm').value = '';
     mode();
   }
+  function authMode(register, focus = false) {
+    registration = register;
+    if (!register && location.hash === '#register') history.replaceState(null, '', location.pathname + location.search);
+    $('registration-form').hidden = !register; $('login-form').hidden = register;
+    $('auth-login').setAttribute('aria-pressed', String(!register));
+    $('auth-register').setAttribute('aria-pressed', String(register));
+    error('login-error', ''); error('register-error', '');
+    $('password').value = ''; $('register-password').value = ''; $('register-confirm').value = '';
+    if (focus) (register ? $('register-invite').value ? $('register-username') : $('register-invite') : $('username')).focus();
+  }
   function prepareInvite() {
-    const match = location.hash.match(/^#invite=([A-Za-z0-9_-]{43})$/);
-    if (match) { invitation = match[1]; history.replaceState(null, '', location.pathname + location.search); }
-    $('registration-form').hidden = !invitation; $('login-form').hidden = Boolean(invitation);
-    return Boolean(invitation);
+    if (location.hash.startsWith('#invite=')) {
+      $('register-invite').value = location.hash.slice(8); registration = true;
+      history.replaceState(null, '', location.pathname + location.search);
+    } else if (location.hash === '#register') registration = true;
+    authMode(registration);
+    return registration;
+  }
+  function inviteCode(value) {
+    const text = value.trim();
+    if (/^[A-Za-z0-9_-]{43}$/.test(text)) return text;
+    try {
+      const url = new URL(text);
+      if (url.origin === location.origin && url.pathname === '/') {
+        const match = url.hash.match(/^#invite=([A-Za-z0-9_-]{43})$/);
+        if (match) return match[1];
+      }
+    } catch {}
+    throw new Error('请粘贴本站有效的邀请码或完整邀请链接；没有邀请码请联系服务管理员');
   }
   function show() {
     $('status-dialog').close(); $('account-dialog').showModal();
@@ -114,12 +138,18 @@ const PhoneAccounts = (() => {
   }
   function mount(context) {
     ctx = context;
+    window.addEventListener('hashchange', () => {
+      if (!ctx.getState().csrf && (location.hash.startsWith('#invite=') || location.hash === '#register')) prepareInvite();
+    });
     $('admin-edit-dialog').addEventListener('close', () => { selected = null; });
-    $('register-back').onclick = () => { invitation = ''; prepareInvite(); };
+    $('auth-register').onclick = $('login-register').onclick = () => authMode(true, true);
+    $('auth-login').onclick = $('register-back').onclick = () => authMode(false, true);
+    $('registration-form').addEventListener('input', () => error('register-error', ''));
     form('registration-form', 'register-error', async () => {
+      const code = inviteCode($('register-invite').value);
       if ($('register-password').value !== $('register-confirm').value) throw new Error('两次输入的密码不一致');
-      const session = await ctx.api('/api/register', { code: invitation, username: $('register-username').value, password: $('register-password').value });
-      invitation = ''; prepareInvite(); $('register-password').value = ''; $('register-confirm').value = '';
+      const session = await ctx.api('/api/register', { code, username: $('register-username').value, password: $('register-password').value });
+      $('register-invite').value = ''; authMode(false);
       await ctx.enterApp(session); ctx.notice('账号已开通，点击“选择电脑”添加你的第一台电脑');
     });
     $('open-admin').onclick = () => { $('account-dialog').close(); $('admin-dialog').showModal(); void loadAdmin(); };
