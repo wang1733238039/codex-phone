@@ -35,11 +35,9 @@
       </form>
       <form id="registration-form" hidden>
         <h2>创建你的独立账号</h2>
-        <p id="register-help" class="account-note">当前为邀请注册。请先向为你开通服务的管理员获取邀请码或邀请链接，再在这里创建账号。服务期从注册成功开始计算。</p>
-        <label for="register-invite">邀请码或邀请链接</label>
-        <input id="register-invite" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required maxlength="2048" placeholder="粘贴管理员提供的邀请码或完整链接" aria-describedby="register-help">
+        <p id="register-help" class="account-note">填写账号和密码即可注册，无需邀请码。新账号默认开通 30 天服务，注册成功后即可绑定自己的电脑。</p>
         <label for="register-username">账号</label>
-        <input id="register-username" autocomplete="username" required minlength="3" maxlength="80" pattern="[a-zA-Z0-9][a-zA-Z0-9_.@\-]{2,79}" placeholder="字母、数字或邮箱">
+        <input id="register-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="80" pattern="[a-zA-Z0-9][a-zA-Z0-9_.@\-]{2,79}" placeholder="字母、数字或邮箱" aria-describedby="register-help">
         <label for="register-password">设置密码</label>
         <input id="register-password" type="password" autocomplete="new-password" required minlength="10" maxlength="128" placeholder="至少 10 个字符">
         <label for="register-confirm">确认密码</label>

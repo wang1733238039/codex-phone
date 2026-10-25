@@ -115,6 +115,75 @@ test('independent logins bind sessions to immutable owners; normal users cannot 
   assert.equal((await a.json('/api/account')).account.role, 'member');
 });
 
+test('public signup persists a salted password and logs in without an invitation or client-controlled privileges', async t => {
+  const f = await fixture(t, { defaultDeviceLimit: 2 }), c = f.client(), before = Date.now();
+  const response = await c.request('/api/register', 'POST', {
+    username: '  New-Member  ', password: PASSWORD, role: 'admin', ownerId: 'personal',
+    status: 'active', serviceDays: 3660, deviceLimit: 50, expiresAt: null
+  });
+  assert.equal(response.status, 201);
+  assert.match(response.headers.get('set-cookie'), /HttpOnly/i);
+  c.cookie = response.headers.get('set-cookie').split(';')[0];
+  const session = await response.json(); c.csrf = session.csrf;
+  assert.equal(session.authenticated, true);
+  assert.equal(session.account.username, 'new-member'); assert.equal(session.account.role, 'member');
+  assert.equal(session.account.deviceLimit, 2); assert.equal(session.account.deviceCount, 0);
+  assert.notEqual(session.account.id, 'personal'); assert.equal(session.primaryDeviceId, null);
+  assert.ok(session.account.expiresAt >= before + 30 * 86400000);
+  assert.ok(session.account.expiresAt <= Date.now() + 30 * 86400000);
+  assert.deepEqual((await c.json('/api/devices')).devices, []);
+  assert.equal((await c.request('/api/admin/accounts')).status, 403);
+  const database = new DatabaseSync(f.config.database, { readOnly: true });
+  try {
+    const stored = database.prepare('SELECT * FROM accounts WHERE id=?').get(session.account.id);
+    assert.match(stored.password_hash, /^[a-f0-9]{32}:[a-f0-9]{128}$/);
+    assert.notEqual(stored.password_hash, PASSWORD);
+    assert.equal(database.prepare('SELECT COUNT(*) n FROM invitations').get().n, 0);
+    assert.equal(database.prepare("SELECT actor_id FROM account_audit WHERE target_id=? AND action='account.create'").get(stored.id).actor_id, stored.id);
+  } finally { database.close(); }
+  assert.doesNotMatch(JSON.stringify(session), /password_hash|independent-test-password/);
+  await c.json('/api/logout', 'POST', {});
+  assert.equal((await c.json('/api/session')).authenticated, false);
+  await c.login('NEW-MEMBER'); assert.equal(c.account.id, session.account.id);
+  const listing = await f.admin.json('/api/admin/accounts?q=new-member');
+  assert.equal(listing.accounts[0].id, session.account.id);
+});
+
+test('concurrent public signups reject duplicate usernames and keep self-registered owners isolated', async t => {
+  const f = await fixture(t), a = f.client(), b = f.client();
+  const register = (c, name) => c.request('/api/register', 'POST', { username: name, password: PASSWORD });
+  const duplicates = await Promise.all([register(a, 'SELF-A'), register(b, 'self-a')]);
+  assert.deepEqual(duplicates.map(r => r.status).sort(), [201, 409]);
+  assert.equal((await register(b, 'self-b')).status, 201);
+  await a.login('self-a'); await b.login('self-b');
+  a.id = a.account.id; b.id = b.account.id; assert.notEqual(a.id, b.id);
+  const da = await f.pair(a), db = await f.pair(b), threadId = randomUUID();
+  await f.connect(da, 'Self A', threadId); await f.connect(db, 'Self B', threadId);
+  assert.equal((await a.json('/api/devices')).devices.length, 1);
+  assert.equal((await b.json('/api/devices')).devices.length, 1);
+  assert.equal((await a.json(`/api/devices/${da.deviceId}/threads/${threadId}`)).messages[0].text, 'Self A的输入');
+  assert.equal((await a.request(`/api/devices/${db.deviceId}/threads/${threadId}`)).status, 404);
+  assert.equal((await b.request(`/api/devices/${da.deviceId}/threads/${threadId}/send`, 'POST', { requestId: randomUUID(), text: 'blocked' })).status, 404);
+  assert.equal(f.app.store.db.prepare("SELECT COUNT(*) n FROM account_audit WHERE action='account.create'").get().n, 2);
+  const hashes = f.app.store.db.prepare("SELECT password_hash FROM accounts WHERE role='member'").all();
+  assert.notEqual(hashes[0].password_hash, hashes[1].password_hash);
+});
+
+test('public signup validates credentials and origin and limits attempts regardless of untrusted forwarded IP headers', async t => {
+  const f = await fixture(t), c = f.client();
+  assert.equal((await c.request('/api/register', 'POST', { username: 'cross-origin', password: PASSWORD }, { Origin: 'https://other.example' })).status, 403);
+  const invalid = [
+    null, [], {}, { username: 'bad space', password: PASSWORD }, { username: 'ok-user', password: 'short' },
+    { username: 'ok-user', password: 'x'.repeat(129) }, { username: 'x'.repeat(81), password: PASSWORD },
+    { username: 'ok-user', password: 42 }
+  ];
+  for (const [i, data] of invalid.entries()) {
+    assert.equal((await c.request('/api/register', 'POST', data, { 'X-Real-IP': `192.0.2.${i + 1}` })).status, 400);
+  }
+  assert.equal((await c.request('/api/register', 'POST', { username: 'limited-user', password: PASSWORD }, { 'X-Real-IP': '192.0.2.200' })).status, 429);
+  assert.equal(f.app.store.db.prepare('SELECT COUNT(*) n FROM accounts').get().n, 1);
+});
+
 test('one-use invitations start entitlement on redemption, ignore role/owner input and support revoke and expiry', async t => {
   const f = await fixture(t), invite = await f.admin.json('/api/admin/invitations', 'POST', { serviceDays: 12, deviceLimit: 2 });
   const row = f.app.store.db.prepare('SELECT * FROM invitations WHERE id=?').get(invite.id);
@@ -133,7 +202,7 @@ test('one-use invitations start entitlement on redemption, ignore role/owner inp
   const three = await f.admin.json('/api/admin/invitations', 'POST', {});
   f.app.store.db.prepare('UPDATE invitations SET expires_at=? WHERE id=?').run(Date.now() - 1, three.id);
   assert.equal((await register('expired-user', three.code)).status, 400);
-  assert.equal((await c.request('/api/register', 'POST', { username: 'no-invite', password: PASSWORD })).status, 400);
+  assert.equal((await c.request('/api/register', 'POST', { username: 'no-invite', password: PASSWORD })).status, 201);
   assert.doesNotMatch(JSON.stringify(await f.admin.json('/api/admin/invitations')), new RegExp(invite.code));
 });
 

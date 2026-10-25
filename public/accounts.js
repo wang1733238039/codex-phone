@@ -2,7 +2,7 @@
 const PhoneAccounts = (() => {
   const $ = id => document.getElementById(id);
   const labels = { active: '使用中', expired: '已到期', disabled: '已停用', deleted: '已删除' };
-  let ctx, account = null, generation = 0, adminSequence = 0, selected = null, nextOffset = null, registration = false;
+  let ctx, account = null, generation = 0, adminSequence = 0, selected = null, nextOffset = null, registration = false, invitationCode = '';
   const datetime = value => value == null ? '长期有效' : new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
   const inputTime = value => { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
   function error(id, message) { $(id).textContent = message || ''; $(id).hidden = !message; }
@@ -16,9 +16,9 @@ const PhoneAccounts = (() => {
     $('open-admin').hidden = value.role !== 'admin'; $('account-delete-section').hidden = value.role === 'admin';
     const rows = [['账号', value.username], ['状态', value.role === 'admin' ? '管理员' : labels[value.accessState]], ['到期时间', datetime(value.expiresAt)], ['已绑定电脑', `${value.deviceCount} / ${value.deviceLimit}`]];
     $('account-summary').replaceChildren(...rows.map(([label, text]) => { const row = node('div', 'status-item'); row.append(node('span', '', label), node('span', '', text)); return row; }));
-    $('account-service-note').textContent = value.role === 'admin' ? '在管理页创建用户或生成邀请。现有电脑与会话保留。' :
-      value.accessState === 'expired' ? '套餐已到期。仍可查看自己的缓存、解绑电脑和管理账号；续期后恢复电脑接入与发送。请联系为你开通账号的管理员。' :
-      '续费请联系为你开通账号的管理员。托管服务不包含模型费用，使用时电脑需保持开机联网。';
+    $('account-service-note').textContent = value.role === 'admin' ? '用户可从首页自行注册。在管理页查看用户、续期或停用账号。' :
+      value.accessState === 'expired' ? '套餐已到期。仍可查看自己的缓存、解绑电脑和管理账号；续期后恢复电脑接入与发送。请联系服务管理员续期。' :
+      '续费请联系服务管理员。托管服务不包含模型费用，使用时电脑需保持开机联网。';
     ctx.updateComposer();
   }
   async function refresh() {
@@ -36,33 +36,24 @@ const PhoneAccounts = (() => {
   }
   function authMode(register, focus = false) {
     registration = register;
+    if (!register) invitationCode = '';
     if (!register && location.hash === '#register') history.replaceState(null, '', location.pathname + location.search);
     $('registration-form').hidden = !register; $('login-form').hidden = register;
     $('auth-login').setAttribute('aria-pressed', String(!register));
     $('auth-register').setAttribute('aria-pressed', String(register));
+    $('register-help').textContent = invitationCode ? '填写账号和密码即可注册。此链接包含的服务期从注册成功开始计算。' :
+      '填写账号和密码即可注册，无需邀请码。新账号默认开通 30 天服务，注册成功后即可绑定自己的电脑。';
     error('login-error', ''); error('register-error', '');
     $('password').value = ''; $('register-password').value = ''; $('register-confirm').value = '';
-    if (focus) (register ? $('register-invite').value ? $('register-username') : $('register-invite') : $('username')).focus();
+    if (focus) (register ? $('register-username') : $('username')).focus();
   }
   function prepareInvite() {
     if (location.hash.startsWith('#invite=')) {
-      $('register-invite').value = location.hash.slice(8); registration = true;
+      invitationCode = location.hash.slice(8); registration = true;
       history.replaceState(null, '', location.pathname + location.search);
-    } else if (location.hash === '#register') registration = true;
+    } else if (location.hash === '#register') { invitationCode = ''; registration = true; }
     authMode(registration);
     return registration;
-  }
-  function inviteCode(value) {
-    const text = value.trim();
-    if (/^[A-Za-z0-9_-]{43}$/.test(text)) return text;
-    try {
-      const url = new URL(text);
-      if (url.origin === location.origin && url.pathname === '/') {
-        const match = url.hash.match(/^#invite=([A-Za-z0-9_-]{43})$/);
-        if (match) return match[1];
-      }
-    } catch {}
-    throw new Error('请粘贴本站有效的邀请码或完整邀请链接；没有邀请码请联系服务管理员');
   }
   function show() {
     $('status-dialog').close(); $('account-dialog').showModal();
@@ -85,7 +76,7 @@ const PhoneAccounts = (() => {
         if (user.role !== 'admin') { const button = node('button', 'secondary', '管理'); button.type = 'button'; button.setAttribute('aria-label', `管理账号 ${user.username}`); button.onclick = () => edit(user); row.append(button); }
         $('admin-users').append(row);
       }
-      if (!data.accounts.length && !append) $('admin-users').append(node('p', 'account-note', '没有匹配账号。可在上方生成邀请，开通第一位用户。'));
+      if (!data.accounts.length && !append) $('admin-users').append(node('p', 'account-note', '没有匹配账号。用户可从网站首页自行注册，也可在上方人工创建账号。'));
       nextOffset = data.nextOffset; $('admin-load-more').hidden = nextOffset === null;
       const invites = await ctx.api('/api/admin/invitations');
       if (seq !== generation || request !== adminSequence || account?.role !== 'admin') return;
@@ -146,10 +137,9 @@ const PhoneAccounts = (() => {
     $('auth-login').onclick = $('register-back').onclick = () => authMode(false, true);
     $('registration-form').addEventListener('input', () => error('register-error', ''));
     form('registration-form', 'register-error', async () => {
-      const code = inviteCode($('register-invite').value);
       if ($('register-password').value !== $('register-confirm').value) throw new Error('两次输入的密码不一致');
-      const session = await ctx.api('/api/register', { code, username: $('register-username').value, password: $('register-password').value });
-      $('register-invite').value = ''; authMode(false);
+      const session = await ctx.api('/api/register', { ...(invitationCode ? { code: invitationCode } : {}), username: $('register-username').value, password: $('register-password').value });
+      authMode(false);
       await ctx.enterApp(session); ctx.notice('账号已开通，点击“选择电脑”添加你的第一台电脑');
     });
     $('open-admin').onclick = () => { $('account-dialog').close(); $('admin-dialog').showModal(); void loadAdmin(); };

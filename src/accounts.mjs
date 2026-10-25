@@ -114,7 +114,7 @@ export class Accounts {
     const id = randomUUID(), now = Date.now();
     this.db.prepare("INSERT INTO accounts VALUES (?,?,?,'member','active',?,?,?,?)")
       .run(id, name, hash, now + days * DAY, deviceLimit, now, now);
-    this.audit(actor, id, 'account.create'); return this.get(id);
+    this.audit(actor ?? id, id, 'account.create'); return this.get(id);
   }
   requireAdmin(id) {
     const account = this.requireActive(id);
@@ -152,10 +152,16 @@ export class Accounts {
     this.audit(actor, id, 'invitation.revoke');
   }
   async register(data) {
-    if (typeof data.code !== 'string' || !/^[a-zA-Z0-9_-]{43}$/.test(data.code)) fail(400, '邀请链接无效或已过期');
+    const invited = data.code !== undefined;
+    if (invited && (typeof data.code !== 'string' || !/^[a-zA-Z0-9_-]{43}$/.test(data.code))) fail(400, '邀请链接无效或已过期');
     const name = username(data.username), hash = await passwordHash(data.password);
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      if (!invited) {
+        const deviceLimit = integer(this.config.defaultDeviceLimit ?? 3, 1, 50, '电脑上限');
+        const account = this.insert(name, hash, 30, deviceLimit, null);
+        this.db.exec('COMMIT'); return account;
+      }
       const invite = this.db.prepare('SELECT * FROM invitations WHERE hash=? AND expires_at>? AND claimed_at IS NULL AND revoked_at IS NULL')
         .get(credentialHash(data.code), Date.now());
       if (!invite || this.access(this.get(invite.created_by)) !== 'active') fail(400, '邀请链接无效或已过期');

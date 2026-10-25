@@ -42,16 +42,16 @@ try {
   await member.locator('#auth-register').click();
   assert.equal(await member.locator('#login-error').isVisible(), false);
   await member.locator('#registration-form').waitFor({ state: 'visible' });
-  assert.match(await member.locator('#register-help').innerText(), /管理员/);
+  assert.match(await member.locator('#register-help').innerText(), /无需邀请码/);
+  assert.equal(await member.locator('#register-invite').count(), 0);
   await member.locator('#register-back').click();
   await member.locator('#login-register').click();
-  await member.locator('#register-invite').fill('invalid-invite');
   await member.locator('#register-username').fill('phone-member');
   await member.locator('#register-password').fill('member-test-password');
-  await member.locator('#register-confirm').fill('member-test-password');
+  await member.locator('#register-confirm').fill('different-test-password');
   await member.locator('#register-submit').click();
-  await member.getByText('请粘贴本站有效的邀请码或完整邀请链接；没有邀请码请联系服务管理员', { exact: true }).waitFor();
-  await member.locator('#register-invite').fill(inviteLink);
+  await member.getByText('两次输入的密码不一致', { exact: true }).waitFor();
+  await member.locator('#register-confirm').fill('member-test-password');
   await member.evaluate(() => scrollTo(0, 0));
   await member.screenshot({ path: join(artifacts, 'phone-register.png'), fullPage: true });
   for (const [width, height] of [[375, 812], [390, 844], [1440, 1000]]) {
@@ -59,16 +59,29 @@ try {
     assert.equal(await member.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   }
   await member.setViewportSize({ width: 375, height: 812 });
-  await member.goto(inviteLink); await member.locator('#registration-form').waitFor({ state: 'visible' });
-  await member.waitForFunction(() => location.hash === '');
-  assert.equal(new URL(member.url()).hash, '', 'invitation is removed from browser URL');
-  assert.equal(await member.locator('#register-invite').inputValue(), new URL(inviteLink).hash.slice(8));
-  await member.locator('#auth-login').click();
-  await member.locator('#auth-register').click();
-  await member.locator('#register-invite').fill(inviteLink);
-  await member.locator('#register-username').fill('phone-member');
-  await member.locator('#register-password').fill('member-test-password'); await member.locator('#register-confirm').fill('member-test-password');
   await member.locator('#register-submit').click(); await member.locator('#app-view').waitFor({ state: 'visible' });
+  assert.equal(await member.evaluate(async () => (await (await fetch('/api/devices')).json()).devices.length), 0);
+  const signup = app.store.db.prepare("SELECT * FROM accounts WHERE username='phone-member'").get();
+  assert.equal(signup.role, 'member'); assert.equal(signup.device_limit, 3);
+  assert.equal(app.store.db.prepare('SELECT claimed_at FROM invitations').get().claimed_at, null);
+  await member.evaluate(async () => {
+    const session = await (await fetch('/api/session')).json();
+    const response = await fetch('/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf }, body: '{}' });
+    if (!response.ok) throw new Error('Logout failed');
+  });
+  await member.reload(); await member.locator('#login-form').waitFor({ state: 'visible' });
+  await member.locator('#username').fill('phone-member'); await member.locator('#password').fill('member-test-password');
+  await member.locator('#login-button').click(); await member.locator('#app-view').waitFor({ state: 'visible' });
+  const legacyContext = await browser.newContext();
+  try {
+    const legacy = await legacyContext.newPage(); legacy.on('pageerror', e => errors.push(e.message));
+    await legacy.goto(inviteLink); await legacy.locator('#registration-form').waitFor({ state: 'visible' });
+    await legacy.waitForFunction(() => location.hash === '');
+    await legacy.locator('#register-username').fill('legacy-invited');
+    await legacy.locator('#register-password').fill('legacy-test-password'); await legacy.locator('#register-confirm').fill('legacy-test-password');
+    await legacy.locator('#register-submit').click(); await legacy.locator('#app-view').waitFor({ state: 'visible' });
+    assert.ok(app.store.db.prepare('SELECT claimed_at FROM invitations').get().claimed_at);
+  } finally { await legacyContext.close(); }
   await member.locator('#account-banner').click();
   assert.equal(await member.locator('#open-admin').isVisible(), false);
   await member.screenshot({ path: join(artifacts, 'phone-member-account.png') });
@@ -130,8 +143,8 @@ try {
   await member.reload(); await member.locator('#app-view').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
   const report = { passed: true, verifiedAt: new Date().toISOString(), pageErrors: errors,
-    checked: ['homepage-login-register-switch', 'unknown-user-with-admin-password', 'manual-invitation-link-entry', 'invalid-invite-feedback',
-      'admin-invitation', 'invite-registration', 'hash-removed', 'private-empty-account', 'member-no-admin-access',
+    checked: ['homepage-login-register-switch', 'unknown-user-with-admin-password', 'no-invitation-field', 'password-confirmation-feedback',
+      'public-self-registration', 'signup-logout-login', 'admin-invitation', 'legacy-invite-registration', 'hash-removed', 'private-empty-account', 'member-no-admin-access',
       'own-device-pairing', 'conversation-history', 'renewal-from-existing-expiry', 'expiry-cached-read', 'expiry-draft-allowed',
       'expiry-send-disabled', 'direct-account-create', 'suspension-logout-clears-history', 'restore-login', 'reload-session',
       '375-390-1440-no-overflow'] };
