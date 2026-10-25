@@ -9,6 +9,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/conversation.css">
+  <link rel="stylesheet" href="/accounts.css">
   <title>Codex 随行</title>
 </head>
 <body>
@@ -27,6 +28,19 @@
         <p id="login-error" class="error" role="alert" hidden></p>
         <button id="login-button" class="primary" type="submit">登录控制台 <span aria-hidden="true">→</span></button>
       </form>
+      <form id="registration-form" hidden>
+        <h2>创建你的独立账号</h2>
+        <p class="account-note">使用邀请开通。服务期从注册成功开始计算，电脑和会话仅对你可见。</p>
+        <label for="register-username">账号</label>
+        <input id="register-username" autocomplete="username" required minlength="3" maxlength="80" pattern="[a-zA-Z0-9][a-zA-Z0-9_.@\-]{2,79}" placeholder="字母、数字或邮箱">
+        <label for="register-password">设置密码</label>
+        <input id="register-password" type="password" autocomplete="new-password" required minlength="10" maxlength="128" placeholder="至少 10 个字符">
+        <label for="register-confirm">确认密码</label>
+        <input id="register-confirm" type="password" autocomplete="new-password" required minlength="10" maxlength="128">
+        <p id="register-error" class="error" role="alert" hidden></p>
+        <button id="register-submit" class="primary" type="submit">开通并登录</button>
+        <button id="register-back" class="text-button full" type="button">已有账号，返回登录</button>
+      </form>
       <p class="login-footnote">连接你自己的电脑 · 使用现有 Codex 配置</p>
     </div>
     <p class="login-bottom">CODEX / PERSONAL CONSOLE</p>
@@ -43,6 +57,7 @@
         <svg aria-hidden="true"><use href="/device-icons.svg#monitor"/></svg><span id="device-label">选择电脑</span><svg aria-hidden="true"><use href="/device-icons.svg#chevron-down"/></svg>
       </button>
       <div class="connection-strip"><span id="connection-dot" class="status-dot"></span><span id="connection-label">正在连接电脑</span><span id="connection-time"></span></div>
+      <button id="account-banner" class="account-banner" data-action="account" type="button"><span id="account-banner-label">账户与套餐</span><span aria-hidden="true">→</span></button>
       <div class="list-heading"><h1 id="list-title">会话</h1><span id="thread-count" class="count">—</span><button id="new-thread-button" class="icon-button refresh-button" type="button" aria-label="新建对话" aria-haspopup="dialog" title="新建对话"><svg aria-hidden="true"><use href="/device-icons.svg#plus"/></svg></button><button class="icon-button" data-action="refresh" aria-label="刷新会话"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 11.5-2L20 8M4 16l2.5 3A7 7 0 0 0 18 17"/></svg></button></div>
       <label class="search-box" for="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" autocomplete="off" placeholder="搜索会话、内容摘要或项目" aria-label="搜索会话"></label>
       <nav class="desktop-tabs" aria-label="会话分类"><button class="tab active" data-view="recent" aria-current="page">最近会话</button><button class="tab" data-view="archived">已归档</button></nav>
@@ -64,6 +79,7 @@
           <button class="icon-button back-button" data-action="back" aria-label="返回会话列表"><svg viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></svg></button>
           <div class="chat-heading"><button id="chat-device-button" class="chat-device" type="button" data-action="devices" aria-label="切换电脑" aria-haspopup="dialog"><span id="chat-device-name">选择电脑</span><svg aria-hidden="true"><use href="/device-icons.svg#chevron-down"/></svg></button><h2 id="chat-title"></h2><p id="chat-project"></p></div>
           <span id="chat-badge" class="badge">历史</span>
+          <button class="icon-button" data-action="account" type="button" aria-label="账户与套餐" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></button>
         </header>
         <div id="cache-banner" class="cache-banner" role="status" hidden></div>
         <div id="execution-status" class="execution-status" role="status"></div>
@@ -91,7 +107,81 @@
     <nav class="mobile-nav" aria-label="主要导航"><button class="active" data-view="recent" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v13H9l-4 4V4Z"/><path d="M9 8h6m-6 4h4"/></svg><span>会话</span></button><button data-view="archived"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v12H4zM3 4h18v4H3zm7 8h4"/></svg><span>归档</span></button><button data-action="status"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span>连接</span></button></nav>
   </div>
 
-  <dialog id="status-dialog"><form method="dialog" class="dialog-heading"><h2>连接信息</h2><button class="icon-button" aria-label="关闭连接信息">×</button></form><div id="status-detail"></div><p class="dialog-note">电脑需要保持开机并运行连接程序。离线时可查看已缓存的列表和历史。</p><button class="secondary full" data-action="logout">退出登录</button></dialog>
+  <dialog id="status-dialog"><form method="dialog" class="dialog-heading"><h2>连接信息</h2><button class="icon-button" aria-label="关闭连接信息">×</button></form><div id="status-detail"></div><p class="dialog-note">电脑需要保持开机并运行连接程序。离线时可查看已缓存的列表和历史。</p><button class="secondary full" data-action="account" type="button">账户与套餐</button><button class="text-button full" data-action="logout">退出登录</button></dialog>
+  <dialog id="account-dialog" aria-labelledby="account-title">
+    <form method="dialog" class="dialog-heading"><h2 id="account-title">账户与套餐</h2><button class="icon-button" aria-label="关闭账户与套餐"><svg aria-hidden="true"><use href="/device-icons.svg#x"/></svg></button></form>
+    <div id="account-summary" class="account-summary"></div>
+    <p id="account-service-note" class="account-note"></p>
+    <button id="open-admin" class="primary full" type="button" hidden>管理用户与邀请</button>
+    <details class="account-section"><summary>修改登录密码</summary>
+      <form id="account-password-form" class="account-form">
+        <label for="account-current-password">当前密码<input id="account-current-password" type="password" autocomplete="current-password" required maxlength="500"></label>
+        <label for="account-new-password">新密码<input id="account-new-password" type="password" autocomplete="new-password" required minlength="10" maxlength="128" placeholder="至少 10 个字符"></label>
+        <p id="account-password-error" class="error" role="alert" hidden></p>
+        <button class="secondary full" type="submit">修改并重新登录</button>
+      </form>
+    </details>
+    <details id="account-delete-section" class="account-section" hidden><summary>删除账号与云端数据</summary>
+      <p class="account-note">删除绑定关系、云端会话缓存和附件。电脑上的 Codex 原始会话保留。此操作无法撤销。</p>
+      <form id="account-delete-form" class="account-form">
+        <label for="account-delete-name">输入完整账号<input id="account-delete-name" required autocomplete="off" maxlength="80"></label>
+        <label for="account-delete-password">登录密码<input id="account-delete-password" type="password" autocomplete="current-password" required maxlength="500"></label>
+        <p id="account-delete-error" class="error" role="alert" hidden></p>
+        <button class="secondary danger-text full" type="submit">永久删除账号</button>
+      </form>
+    </details>
+    <button class="text-button full" data-action="logout" type="button">退出登录</button>
+  </dialog>
+  <dialog id="admin-dialog" class="admin-dialog" aria-labelledby="admin-title">
+    <form method="dialog" class="dialog-heading"><div><p class="eyebrow">HOSTED ACCOUNTS</p><h2 id="admin-title">用户与邀请</h2></div><button class="icon-button" aria-label="关闭用户管理"><svg aria-hidden="true"><use href="/device-icons.svg#x"/></svg></button></form>
+    <p class="account-note">在同一服务开通独立账号。这里仅显示账号状态与电脑数量。</p>
+    <p id="admin-error" class="error" role="alert" hidden></p>
+    <details id="admin-create-section" class="account-section" open><summary>开通用户</summary>
+      <form id="admin-create-form" class="account-form">
+        <label for="admin-create-mode">开通方式<select id="admin-create-mode"><option value="invite">生成邀请，让用户自己设置密码</option><option value="account">直接创建账号</option></select></label>
+        <div id="admin-credentials" hidden>
+          <label for="admin-username">账号<input id="admin-username" autocomplete="off" minlength="3" maxlength="80"></label>
+          <label for="admin-password">初始密码<input id="admin-password" type="password" autocomplete="new-password" minlength="10" maxlength="128" placeholder="至少 10 个字符"></label>
+        </div>
+        <div class="account-fields">
+          <label for="admin-service-days">服务天数<input id="admin-service-days" type="number" min="1" max="3660" value="30" required></label>
+          <label for="admin-device-limit">电脑上限<input id="admin-device-limit" type="number" min="1" max="50" value="3" required></label>
+          <label id="admin-invite-validity-label" for="admin-invite-validity">邀请有效天数<input id="admin-invite-validity" type="number" min="1" max="30" value="7" required></label>
+        </div>
+        <button id="admin-create-submit" class="primary" type="submit">生成一次性邀请</button>
+      </form>
+      <div id="admin-invite-result" class="invite-result" hidden>
+        <label for="admin-invite-link">邀请链接 · 仅本次可复制</label>
+        <input id="admin-invite-link" readonly aria-label="一次性邀请链接">
+        <p class="account-note">把链接交给这一位用户；成功注册后失效。服务天数从兑换时起算。</p>
+        <button id="admin-copy-invite" class="secondary" type="button">复制邀请链接</button>
+      </div>
+    </details>
+    <section class="admin-users" aria-labelledby="admin-users-title">
+      <div class="admin-list-heading"><h3 id="admin-users-title">账号</h3><button id="admin-refresh" class="text-button" type="button">刷新</button></div>
+      <form id="admin-search-form" class="admin-search"><label class="sr-only" for="admin-search">搜索账号</label><input id="admin-search" type="search" placeholder="搜索账号" maxlength="100"><button class="secondary" type="submit">搜索</button></form>
+      <div id="admin-users" aria-live="polite"></div>
+      <button id="admin-load-more" class="secondary full" type="button" hidden>加载更多账号</button>
+    </section>
+    <details class="account-section"><summary>最近的邀请</summary><div id="admin-invitations"></div></details>
+  </dialog>
+  <dialog id="admin-edit-dialog" aria-labelledby="admin-edit-title">
+    <form method="dialog" class="dialog-heading"><h2 id="admin-edit-title">管理账号</h2><button class="icon-button" aria-label="关闭账号管理"><svg aria-hidden="true"><use href="/device-icons.svg#x"/></svg></button></form>
+    <p id="admin-edit-summary" class="account-note"></p>
+    <p id="admin-edit-error" class="error" role="alert" hidden></p>
+    <form id="admin-renew-form" class="account-form">
+      <label for="admin-renew-days">增加服务天数<input id="admin-renew-days" type="number" min="1" max="3660" value="30" required></label>
+      <button class="primary full" type="submit">确认续期</button>
+    </form>
+    <form id="admin-limits-form" class="account-form account-section">
+      <label for="admin-edit-expiry">到期时间（本地时间）<input id="admin-edit-expiry" type="datetime-local" required></label>
+      <label for="admin-edit-limit">电脑上限<input id="admin-edit-limit" type="number" min="1" max="50" required></label>
+      <button class="secondary full" type="submit">保存期限与上限</button>
+    </form>
+    <button id="admin-toggle-user" class="secondary full" type="button">停用账号</button>
+    <details class="account-section"><summary>重置用户密码</summary><form id="admin-reset-password-form" class="account-form"><label for="admin-reset-password">新密码<input id="admin-reset-password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label><button class="secondary full" type="submit">重置并使旧登录失效</button></form></details>
+    <details class="account-section"><summary>删除用户</summary><form id="admin-delete-form" class="account-form"><p class="account-note">永久删除用户云端缓存与设备凭据，无法撤销。</p><label for="admin-delete-name">输入完整账号<input id="admin-delete-name" autocomplete="off" maxlength="80" required></label><button class="secondary danger-text full" type="submit">永久删除用户</button></form></details>
+  </dialog>
   <dialog id="composer-settings-dialog" aria-labelledby="composer-settings-title">
     <form method="dialog" class="dialog-heading"><h2 id="composer-settings-title">消息设置</h2><button class="icon-button" aria-label="关闭消息设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
     <p class="settings-intro">模型与思考设置按电脑和会话保存；发送方式只用于本次操作。</p>
@@ -126,6 +216,7 @@
   <script src="/vendor/purify.js" defer></script>
   <script src="/attachments.js" defer></script>
   <script src="/inbox.js" defer></script>
+  <script src="/accounts.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

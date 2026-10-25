@@ -27,6 +27,7 @@ async function api(path, data) {
   return result;
 }
 function showLogin() {
+  PhoneAccounts.clear();
   $('new-thread-dialog').close(); state.resultSeen.clear(); state.listReady = false; state.projects = [];
   $('composer-settings-dialog').close(); clearTimeout(deliveryTimer);
   PhoneAttachments.reset();
@@ -40,6 +41,7 @@ function showLogin() {
 }
 async function enterApp(session) {
   state.csrf = session.csrf; state.username = session.username || 'admin'; state.primaryDeviceId = session.primaryDeviceId;
+  PhoneAccounts.update(session.account);
   $('login-view').hidden = true; $('app-view').hidden = false;
   $('thread-list').replaceChildren(...Array.from({ length: 4 }, () => el('div', 'skeleton')));
   await loadDevices();
@@ -51,6 +53,8 @@ async function enterApp(session) {
   else { renderDevices(); $('thread-list').replaceChildren(el('div', 'list-empty', route.deviceId ? '此电脑已解绑，请选择其他电脑' : '暂无电脑，请添加电脑')); }
   state.directoryStream?.close(); const directory = state.directoryStream = new EventSource('/api/devices/events');
   directory.addEventListener('devices', () => { if (state.directoryStream === directory) loadDevices().catch(() => {}); });
+  directory.addEventListener('account', () => { if (state.directoryStream === directory) PhoneAccounts.refresh().catch(() => {}); });
+  directory.onerror = () => { if (state.directoryStream === directory) api('/api/session').then(s => { if (!s.authenticated && state.directoryStream === directory) showLogin(); }).catch(() => {}); };
   clearInterval(polling); polling = setInterval(async () => {
     if (!state.csrf || document.hidden) return;
     const deviceId = state.deviceId;
@@ -62,6 +66,7 @@ async function enterApp(session) {
 async function loadDevices() {
   const seq = ++state.directorySeq, data = await api('/api/devices'); if (!state.csrf || seq !== state.directorySeq) return;
   state.primaryDeviceId = data.primaryDeviceId; state.devices = data.devices;
+  PhoneAccounts.update(data.account);
   if (state.deviceId && !state.devices.some(d => d.id === state.deviceId)) {
     saveCurrentView(); state.deviceId = ''; state.stream?.close(); state.listSeq++; state.detailSeq++; state.deviceSeq++;
     state.selected = null; state.detail = null; state.status = {}; state.threads = []; state.groups = []; state.pending = null; detailBusy = false;
@@ -242,8 +247,7 @@ async function loadList() {
 function groupExpanded(group) {
   if (group.kind === 'results') return true;
   if ($('search').value.trim()) return true;
-  try { const value = localStorage.getItem(`codex-phone-group:${scopeKey(state.view)}:${group.id}`) ??
-    (state.deviceId === state.primaryDeviceId ? localStorage.getItem(`codex-phone-group:${state.view}:${group.id}`) : null); if (value !== null) return value === 'true'; } catch {}
+  try { const value = localStorage.getItem(`codex-phone-group:${scopeKey(state.view)}:${group.id}`); if (value !== null) return value === 'true'; } catch {}
   return group.expanded;
 }
 function setGroupExpanded(id, expanded) {
@@ -394,7 +398,7 @@ function updateComposer() {
   const attachmentIds = PhoneAttachments.ids();
   const entries = readPendingEntries(state.selected), duplicate = entries.some(p => typeof p.submitted === 'string' &&
     PhoneAttachments.identity(p.submitted, p.attachmentIds) === PhoneAttachments.identity($('message').value, attachmentIds));
-  let reason = !d ? '正在读取会话' : !s.online ? '电脑离线，联网后才能发送；草稿可以继续写' : !s.controls ? '当前为只读模式' : d.thread.archived ? '已归档，请先在桌面恢复会话' : !d.thread.local ? '此会话不在本机，只能查看' : sending ? '正在提交…' : duplicate ? '相同消息结果待确认，先核对，避免重复执行' : '';
+  let reason = !PhoneAccounts.active() ? '套餐已到期，请在账户页查看续期说明；草稿可以继续写' : !d ? '正在读取会话' : !s.online ? '电脑离线，联网后才能发送；草稿可以继续写' : !s.controls ? '当前为只读模式' : d.thread.archived ? '已归档，请先在桌面恢复会话' : !d.thread.local ? '此会话不在本机，只能查看' : sending ? '正在提交…' : duplicate ? '相同消息结果待确认，先核对，避免重复执行' : '';
   // A running/unknown/offline turn must never prevent writing the next draft.
   // Submission is checked separately so drafting does not imply permission to execute.
   $('message').disabled = !state.selected;
@@ -427,7 +431,6 @@ function readPendingEntries(id, deviceId = state.deviceId) {
   try {
     const key = `codex-phone-pending:${scopeKey(id, deviceId)}`;
     let value = localStorage.getItem(key);
-    if (!value && deviceId === state.primaryDeviceId) { value = localStorage.getItem(`codex-phone-pending:${id}`); if (value) { localStorage.setItem(key, value); localStorage.removeItem(`codex-phone-pending:${id}`); } }
     const parsed = JSON.parse(value); return parsed ? Array.isArray(parsed) ? parsed : [parsed] : [];
   } catch { return []; }
 }
@@ -510,6 +513,7 @@ document.addEventListener('click', async event => {
       }
       case 'copy-pair': await navigator.clipboard.writeText($('pair-code').textContent); notice('配对码已复制'); break;
       case 'status': renderStatus(); $('status-dialog').showModal(); break;
+      case 'account': PhoneAccounts.show(); break;
       case 'composer-settings': updateModelControls(); $('composer-settings-dialog').showModal(); break;
       case 'refresh': button.disabled = true; await loadList(); if (state.selected) await loadDetail(true); notice('已刷新'); break;
       case 'logout': await api('/api/logout', {}); history.replaceState(null, '', location.pathname); showLogin(); break;
@@ -522,4 +526,6 @@ document.addEventListener('click', async event => {
   } catch (error) { notice(error.message); } finally { button.disabled = false; }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.csrf) { loadList(); if (state.selected) loadDetail(true); } });
-api('/api/session').then(session => session.authenticated ? enterApp(session) : showLogin()).catch(() => { showLogin(); $('login-error').textContent = '暂时无法连接服务器，请刷新重试。'; $('login-error').hidden = false; });
+PhoneAccounts.mount({ api, el, notice, enterApp, showLogin, updateComposer, getState: () => state });
+const invited = PhoneAccounts.prepareInvite();
+api('/api/session').then(session => !invited && session.authenticated ? enterApp(session) : showLogin()).catch(() => { showLogin(); $('login-error').textContent = '暂时无法连接服务器，请刷新重试。'; $('login-error').hidden = false; });

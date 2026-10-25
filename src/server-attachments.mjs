@@ -9,6 +9,7 @@ export class ServerAttachments {
   constructor(store, database, options = {}) {
     this.store = store; this.db = store.db; this.root = resolve(dirname(database), 'attachments');
     this.quota = options.attachmentQuotaBytes || 1024 * 1024 * 1024;
+    this.totalQuota = options.serverAttachmentQuotaBytes || Math.max(this.quota, 10 * 1024 * 1024 * 1024);
     this.lock = serialByKey(); this.ready = privateDirectory(this.root);
     this.db.exec(`CREATE TABLE IF NOT EXISTS attachments (
       owner_id TEXT NOT NULL, device_id TEXT NOT NULL, thread_id TEXT NOT NULL, id TEXT PRIMARY KEY,
@@ -19,6 +20,10 @@ export class ServerAttachments {
       CREATE TABLE IF NOT EXISTS attachment_bindings (
       attachment_id TEXT NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(attachment_id,request_id));`);
   }
+  forStore(store, assertWrite = () => {}) {
+    return Object.assign(Object.create(ServerAttachments.prototype), this, { store, assertWrite });
+  }
+  checkWrite() { this.assertWrite?.(); }
   get(deviceId, threadId, id) {
     if (!validId(id)) fail(404, '找不到此附件');
     const row = this.db.prepare('SELECT * FROM attachments WHERE owner_id=? AND device_id=? AND thread_id=? AND id=?')
@@ -33,21 +38,30 @@ export class ServerAttachments {
   }
   async create(deviceId, threadId, data) {
     await this.ready; await this.cleanup();
+    this.checkWrite();
     const name = filename(data.name), size = data.size;
     if (!Number.isSafeInteger(size) || size < 1 || size > MAX_FILE_BYTES) fail(413, '单个附件应为 1 字节至 200 MB');
     const outstanding = this.db.prepare("SELECT COUNT(*) n FROM attachments WHERE owner_id=? AND state!='expired' AND sent_at IS NULL").get(this.store.ownerId).n;
     if (outstanding >= 100) fail(429, '未发送附件过多，请删除不需要的材料');
-    const used = this.db.prepare("SELECT COALESCE(SUM(size),0) n FROM attachments WHERE state!='expired'").get().n;
-    if (used + size > this.quota) fail(413, '服务器附件空间不足，请清理旧附件');
+    const used = this.db.prepare("SELECT COALESCE(SUM(size),0) n FROM attachments WHERE owner_id=? AND state!='expired'").get(this.store.ownerId).n;
+    if (used + size > this.quota) fail(413, '此账号的附件空间不足，请清理旧附件');
+    const total = this.db.prepare("SELECT COALESCE(SUM(size),0) n FROM attachments WHERE state!='expired'").get().n;
+    if (total + size > this.totalQuota) fail(413, '服务器附件空间不足，请联系管理员');
     const id = randomUUID();
     this.db.prepare('INSERT INTO attachments(owner_id,device_id,thread_id,id,name,size,created_at) VALUES(?,?,?,?,?,?,?)')
       .run(...this.store.scope(deviceId), threadId, id, name, size, Date.now());
-    try { const handle = await open(resolve(this.root, id), 'wx', 0o600); await handle.close(); }
-    catch (error) { this.db.prepare('DELETE FROM attachments WHERE id=?').run(id); throw error; }
-    return this.public(this.get(deviceId, threadId, id));
+    try {
+      const handle = await open(resolve(this.root, id), 'wx', 0o600); await handle.close();
+      this.checkWrite();
+      return this.public(this.get(deviceId, threadId, id));
+    } catch (error) {
+      await rm(resolve(this.root, id), { force: true });
+      this.db.prepare('DELETE FROM attachments WHERE id=?').run(id); throw error;
+    }
   }
   async chunk(deviceId, threadId, id, offset, bytes) {
     return this.lock(id, async () => {
+      this.checkWrite();
       const row = this.get(deviceId, threadId, id);
       if (row.state !== 'uploading') fail(409, '此附件已完成或已过期');
       if (!Number.isSafeInteger(offset) || offset < 0 || bytes.length < 1 || bytes.length > CHUNK_BYTES || offset + bytes.length > row.size) fail(400, '附件分块无效');
@@ -60,6 +74,7 @@ export class ServerAttachments {
           const old = Buffer.alloc(bytes.length); await handle.read(old, 0, old.length, offset);
           if (offset + bytes.length > row.offset || !old.equals(bytes)) fail(409, '附件断点不匹配，请重新选择文件');
         } else {
+          this.checkWrite();
           if (offset !== row.offset) fail(409, '附件断点已变化，请重试');
           let written = 0;
           while (written < bytes.length) written += (await handle.write(bytes, written, bytes.length - written, offset + written)).bytesWritten;
@@ -72,6 +87,7 @@ export class ServerAttachments {
   }
   async complete(deviceId, threadId, id) {
     return this.lock(id, async () => {
+      this.checkWrite();
       const row = this.get(deviceId, threadId, id);
       if (row.state === 'ready') return this.public(row);
       if (row.state !== 'uploading' || row.offset !== row.size || (await stat(this.path(row))).size !== row.size) fail(409, '附件尚未上传完整');
@@ -80,12 +96,14 @@ export class ServerAttachments {
       const type = detectType(head, row.name);
       if (type.kind === 'image' && row.size > MAX_IMAGE_BYTES) fail(413, '图片最大 20 MB，请压缩后重新上传');
       row.hash = await fileHash(this.path(row)); Object.assign(row, type, { state: 'ready' });
+      this.checkWrite();
       this.db.prepare("UPDATE attachments SET state='ready',hash=?,kind=?,mime=? WHERE id=?").run(row.hash, row.kind, row.mime, id);
       return this.public(row);
     });
   }
   async sync(deviceId, threadId, id, ask) {
     return this.lock(id, async () => {
+      this.checkWrite();
       const row = this.get(deviceId, threadId, id);
       if (row.state !== 'ready') fail(409, '附件未上传完整或已过期');
       const meta = { id: row.id, name: row.name, size: row.size, hash: row.hash, kind: row.kind, threadId };
@@ -153,6 +171,9 @@ export class ServerAttachments {
     await pipeline(createReadStream(this.path(row)), res);
   }
   async cleanup() {
+    if (this.db.prepare("SELECT name FROM sqlite_master WHERE name='accounts'").get()) {
+      for (const account of this.db.prepare("SELECT id FROM accounts WHERE status='deleted'").all()) await this.purgeOwner(account.id);
+    }
     const rows = this.db.prepare("SELECT * FROM attachments WHERE state!='expired' AND ((sent_at IS NULL AND created_at<?) OR (sent_at IS NOT NULL AND sent_at<?))")
       .all(Date.now() - 86400000, Date.now() - 7 * 86400000);
     for (const row of rows) await this.lock(row.id, async () => {
@@ -161,6 +182,14 @@ export class ServerAttachments {
           (current.sent_at ? current.sent_at >= Date.now() - 7 * 86400000 : current.created_at >= Date.now() - 86400000)) return;
       await rm(this.path(row), { force: true });
       this.db.prepare("UPDATE attachments SET state='expired',remote_ready=0 WHERE id=?").run(row.id);
+    });
+  }
+  async purgeOwner(ownerId) {
+    const rows = this.db.prepare('SELECT * FROM attachments WHERE owner_id=?').all(ownerId);
+    for (const row of rows) await this.lock(row.id, async () => {
+      await rm(this.path(row), { force: true });
+      this.db.prepare('DELETE FROM attachment_bindings WHERE attachment_id=?').run(row.id);
+      this.db.prepare('DELETE FROM attachments WHERE id=? AND owner_id=?').run(row.id, ownerId);
     });
   }
 }

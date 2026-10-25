@@ -4,12 +4,14 @@ import { resolve } from 'node:path';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Store, credentialHash } from './store.mjs';
-import { ROOT, loadConfig, equalSecret, verifyPassword } from './config.mjs';
+import { ROOT, loadConfig, equalSecret } from './config.mjs';
 import { validThreadId } from './local-source.mjs';
 import { compareThreads, sidebarGroups } from './sidebar.mjs';
 import { pathToFileURL } from 'node:url';
 import { ServerAttachments } from './server-attachments.mjs';
 import { CHUNK_BYTES } from './attachment-common.mjs';
+import { Accounts } from './accounts.mjs';
+import { isIP } from 'node:net';
 
 const sha = s => createHash('sha256').update(s).digest('hex');
 const cookieName = 'codex_phone';
@@ -17,26 +19,29 @@ class HttpError extends Error { constructor(status, message) { super(message); t
 
 export function createApp(config) {
   if (!config.agentToken || !config.passwordHash) throw new Error('Missing agent token or password hash');
-  const store = new Store(config.database || resolve(ROOT, '.data', 'cache.sqlite'), config.ownerId || 'personal');
-  const attachments = new ServerAttachments(store, config.database || resolve(ROOT, '.data', 'cache.sqlite'), config);
-  attachments.ready.catch(() => {});
-  store.initializePrimary(config.agentToken);
+  const rootStore = new Store(config.database || resolve(ROOT, '.data', 'cache.sqlite'), config.ownerId || 'personal');
+  const accounts = new Accounts(rootStore, config);
+  const attachmentManager = new ServerAttachments(rootStore, config.database || resolve(ROOT, '.data', 'cache.sqlite'), config);
+  attachmentManager.ready.catch(() => {});
+  rootStore.initializePrimary(config.agentToken);
   const secure = Boolean(config.publicUrl?.startsWith('https://'));
-  const sessions = store.db;
+  const sessions = rootStore.db;
   const publicOrigin = config.publicUrl ? new URL(config.publicUrl).origin : null;
   const allowedHosts = new Set(config.allowedHosts || ['localhost', '127.0.0.1', '[::1]']);
   if (publicOrigin) allowedHosts.add(new URL(publicOrigin).hostname);
   const pending = new Map(), lateResponses = new Map(), listeners = new Map(), loginAttempts = new Map(), pairingAttempts = new Map(), agents = new Map();
   let closing = false;
+  let expiryTimer;
   const online = deviceId => {
     const connection = agents.get(deviceId);
     return Boolean(connection?.ws.readyState === 1 && Date.now() - connection.lastSeen < 45000);
   };
-  const status = (deviceId = store.primaryDeviceId) => {
-    const connection = agents.get(deviceId), connected = online(deviceId);
+  const deviceStatus = (deviceId = rootStore.primaryDeviceId, ownerId = rootStore.ownerId) => {
+    const store = rootStore.forOwner(ownerId);
+    const connection = agents.get(deviceId), connected = Boolean(store.device(deviceId) && accounts.access(accounts.get(ownerId)) === 'active' && online(deviceId));
     return { deviceId, online: connected, lastSeen: connection?.lastSeen || 0, lastSync: store.lastSync(deviceId),
       computer: store.device(deviceId)?.name || '未连接电脑', connectionId: connected ? connection.id : null,
-      controls: Boolean(config.controlsEnabled) && connection?.controls !== false,
+      controls: accounts.access(accounts.get(ownerId)) === 'active' && Boolean(config.controlsEnabled) && connection?.controls !== false,
       capabilities: connection?.capabilities || {}, connectorVersion: connection?.version || null,
       activeTurns: connected ? connection.activeTurns : [], approvals: connected ? connection.approvals : [] };
   };
@@ -44,8 +49,8 @@ export function createApp(config) {
     const event = `event: ${type}\ndata: ${JSON.stringify({ ...data, deviceId })}\n\n`;
     for (const [res, listener] of listeners) if (listener.deviceId === deviceId) res.write(event);
   }
-  function directoryChanged() {
-    for (const [res, listener] of listeners) if (listener.deviceId === null) res.write('event: devices\ndata: {}\n\n');
+  function directoryChanged(ownerId) {
+    for (const [res, listener] of listeners) if (listener.ownerId === ownerId && listener.deviceId === null) res.write('event: devices\ndata: {}\n\n');
   }
   function disconnect(connection) {
     if (agents.get(connection.deviceId) !== connection) return;
@@ -53,12 +58,13 @@ export function createApp(config) {
     for (const [id, p] of pending) if (p.connection === connection) {
       clearTimeout(p.timer); pending.delete(id); p.reject(new HttpError(503, '电脑连接中断；执行结果暂未确认，请先刷新会话'));
     }
-    broadcast(connection.deviceId, 'status'); directoryChanged();
+    for (const [id, p] of lateResponses) if (p.connection === connection) lateResponses.delete(id);
+    broadcast(connection.deviceId, 'status'); directoryChanged(connection.ownerId);
   }
-  function subscribe(req, res, sessionId, deviceId) {
-    if (listeners.size >= 64) throw new HttpError(429, '打开的页面过多');
+  function subscribe(req, res, sessionId, deviceId, ownerId) {
+    if (listeners.size >= 1024 || [...listeners.values()].filter(l => l.ownerId === ownerId).length >= 16) throw new HttpError(429, '打开的页面过多');
     headers(res, 'text/event-stream'); res.setHeader('X-Accel-Buffering', 'no'); res.flushHeaders();
-    listeners.set(res, { sessionId, deviceId });
+    listeners.set(res, { sessionId, deviceId, ownerId });
     res.write(`event: ${deviceId === null ? 'devices' : 'status'}\ndata: {}\n\n`);
     req.on('close', () => listeners.delete(res));
   }
@@ -67,10 +73,65 @@ export function createApp(config) {
     if (!item || item.until < Date.now()) { item = { count: 0, until: Date.now() + windowMs }; map.set(key, item); }
     if (++item.count > count) throw new HttpError(429, '尝试次数过多，请稍后重试');
   }
+  function clientAddress(req) {
+    const socketAddress = req.socket.remoteAddress;
+    // Accept proxy headers only from addresses explicitly configured by the operator.
+    const forwarded = req.headers['x-real-ip'];
+    return config.trustedProxies?.includes(socketAddress) && typeof forwarded === 'string' && isIP(forwarded) ? forwarded : socketAddress;
+  }
   function getSession(req) {
     const token = (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
     if (!token || token.length > 200) return null;
-    return sessions.prepare('SELECT * FROM sessions WHERE id=? AND expires>?').get(sha(token), Date.now()) || null;
+    return sessions.prepare(`SELECT s.* FROM sessions s JOIN accounts a ON s.owner_id=a.id
+      WHERE s.id=? AND s.expires>? AND a.status='active'`).get(sha(token), Date.now()) || null;
+  }
+  function sessionPayload(session) {
+    const account = session && accounts.get(session.owner_id), store = account && rootStore.forOwner(account.id);
+    return { authenticated: Boolean(account), csrf: session?.csrf, username: account?.username,
+      primaryDeviceId: store?.primaryDeviceId, account: account ? accounts.public(account) : undefined };
+  }
+  function createSession(account, res, previous) {
+    if (previous) {
+      sessions.prepare('DELETE FROM sessions WHERE id=?').run(previous.id);
+      for (const [stream, listener] of listeners) if (listener.sessionId === previous.id) { stream.end(); listeners.delete(stream); }
+    }
+    const token = randomBytes(32).toString('base64url'), csrf = randomBytes(24).toString('base64url'), id = sha(token);
+    sessions.prepare('INSERT INTO sessions(id,csrf,expires,owner_id) VALUES (?,?,?,?)')
+      .run(id, csrf, Date.now() + 7 * 86400000, account.id);
+    res.setHeader('Set-Cookie', `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${secure ? '; Secure' : ''}`);
+    return sessionPayload({ id, csrf, owner_id: account.id });
+  }
+  function revokeSessions(ownerId) {
+    sessions.prepare('DELETE FROM sessions WHERE owner_id=?').run(ownerId);
+    for (const [stream, listener] of listeners) if (listener.ownerId === ownerId) { stream.end(); listeners.delete(stream); }
+  }
+  function enforceAccount(ownerId, notify = true) {
+    const access = accounts.access(accounts.get(ownerId));
+    if (access !== 'active') {
+      sessions.prepare('DELETE FROM pairings WHERE owner_id=?').run(ownerId);
+      for (const connection of agents.values()) if (connection.ownerId === ownerId) { disconnect(connection); connection.ws.terminate(); }
+      if (access !== 'expired') revokeSessions(ownerId);
+    }
+    if (notify) {
+      for (const [stream, listener] of listeners) if (listener.ownerId === ownerId) stream.write('event: account\ndata: {}\n\n');
+      directoryChanged(ownerId);
+    }
+  }
+  function scheduleExpiry() {
+    clearTimeout(expiryTimer);
+    if (closing) return;
+    const next = sessions.prepare("SELECT MIN(expires_at) deadline FROM accounts WHERE status='active' AND expires_at>?").get(Date.now()).deadline;
+    if (next == null) return;
+    expiryTimer = setTimeout(() => {
+      for (const account of sessions.prepare("SELECT id FROM accounts WHERE status='active' AND expires_at>=? AND expires_at<=?").all(next, Date.now())) enforceAccount(account.id);
+      scheduleExpiry();
+    }, Math.min(2147483647, Math.max(1, next - Date.now())));
+    expiryTimer.unref();
+  }
+  async function deleteAccount(ownerId, actor) {
+    accounts.markDeleted(ownerId, actor); enforceAccount(ownerId);
+    scheduleExpiry();
+    await attachmentManager.purgeOwner(ownerId);
   }
   function headers(res, type = 'application/json; charset=utf-8') {
     res.setHeader('Content-Type', type);
@@ -94,12 +155,17 @@ export function createApp(config) {
       if (size > 256 * 1024) throw new HttpError(413, '输入内容过长');
       chunks.push(chunk);
     }
-    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+    try {
+      const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid object');
+      return parsed;
+    }
     catch { throw new HttpError(400, '请求格式错误'); }
   }
   function ask(deviceId, action, data = {}, timeout = 25000, onLateResult) {
-    if (!online(deviceId)) return Promise.reject(new HttpError(503, '电脑已离线，请联网后再操作'));
     const connection = agents.get(deviceId);
+    if (connection) accounts.requireActive(connection.ownerId);
+    if (!online(deviceId)) return Promise.reject(new HttpError(503, '电脑已离线，请联网后再操作'));
     const id = randomUUID();
     return new Promise((resolveRequest, reject) => {
       const timer = setTimeout(() => {
@@ -116,6 +182,8 @@ export function createApp(config) {
     ['/app.js', ['public/app.js', 'text/javascript; charset=utf-8']],
     ['/inbox.js', ['public/inbox.js', 'text/javascript; charset=utf-8']],
     ['/attachments.js', ['public/attachments.js', 'text/javascript; charset=utf-8']],
+    ['/accounts.js', ['public/accounts.js', 'text/javascript; charset=utf-8']],
+    ['/accounts.css', ['public/accounts.css', 'text/css; charset=utf-8']],
     ['/styles.css', ['public/styles.css', 'text/css; charset=utf-8']],
     ['/conversation.css', ['public/conversation.css', 'text/css; charset=utf-8']],
     ['/icon.svg', ['public/icon.svg', 'image/svg+xml']],
@@ -140,37 +208,38 @@ export function createApp(config) {
       if (req.method === 'GET' && url.pathname === '/healthz') { json(res, 200, { ok: true }); return; }
       if (req.method === 'POST' && url.pathname === '/api/device-pairings/claim') {
         if (req.headers.origin && req.headers.origin !== publicOrigin) throw new HttpError(403, '请求来源验证失败');
-        limit(pairingAttempts, `claim:${req.socket.remoteAddress}`, 30, 60000);
+        limit(pairingAttempts, `claim:${clientAddress(req)}`, 30, 60000);
         const data = await body(req);
         const code = typeof data.code === 'string' ? data.code.toUpperCase().replace(/[-\s]/g, '') : '';
         const name = typeof data.name === 'string' ? data.name.trim() : '';
         if (!/^[A-HJ-NP-Z2-9]{12}$/.test(code) || !name || name.length > 80) throw new HttpError(400, '请填写有效配对码和电脑名称');
-        if (store.devices().length >= 50) throw new HttpError(409, '已达到电脑数量上限');
         const token = randomBytes(48).toString('base64url');
-        const device = store.claim(credentialHash(code), name, token);
+        const device = accounts.claimDevice(credentialHash(code), name, token);
         if (!device) throw new HttpError(400, '配对码已过期或已使用，请重新生成');
-        directoryChanged(); json(res, 201, { deviceId: device.id, name: device.name, agentToken: token }); return;
+        directoryChanged(device.ownerId); json(res, 201, { deviceId: device.id, name: device.name, agentToken: token }); return;
       }
       const session = getSession(req);
+      if (req.method === 'POST' && url.pathname === '/api/register') {
+        requireOrigin(req); limit(loginAttempts, `register:${clientAddress(req)}`, 8, 900000);
+        const account = await accounts.register(await body(req));
+        scheduleExpiry();
+        json(res, 201, createSession(account, res, session)); return;
+      }
       if (req.method === 'POST' && url.pathname === '/api/login') {
         requireOrigin(req);
-        const ip = req.socket.remoteAddress;
+        const ip = clientAddress(req);
         let attempts = loginAttempts.get(ip);
         if (!attempts || attempts.until < Date.now()) { attempts = { count: 0, until: Date.now() + 900000 }; loginAttempts.set(ip, attempts); }
         if (attempts.count >= 8) throw new HttpError(429, '尝试次数过多，请 15 分钟后重试');
         attempts.count++;
         const data = await body(req);
-        if (typeof data.password !== 'string' || data.password.length > 500 || data.username !== config.username || !verifyPassword(data.password, config.passwordHash)) throw new HttpError(401, '账号或密码不正确');
+        const account = await accounts.authenticate(data.username, data.password);
+        if (!account) throw new HttpError(401, '账号或密码不正确');
         loginAttempts.delete(ip);
-        if (session) sessions.prepare('DELETE FROM sessions WHERE id=?').run(session.id);
-        const token = randomBytes(32).toString('base64url'), csrf = randomBytes(24).toString('base64url');
-        sessions.prepare('INSERT INTO sessions VALUES (?, ?, ?)').run(sha(token), csrf, Date.now() + 7 * 86400000);
-        res.setHeader('Set-Cookie', `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${secure ? '; Secure' : ''}`);
-        json(res, 200, { authenticated: true, csrf, username: config.username, primaryDeviceId: store.primaryDeviceId }); return;
+        json(res, 200, createSession(account, res, session)); return;
       }
       if (req.method === 'GET' && url.pathname === '/api/session') {
-        json(res, 200, { authenticated: Boolean(session), csrf: session?.csrf, username: session ? config.username : undefined,
-          primaryDeviceId: session ? store.primaryDeviceId : undefined }); return;
+        json(res, 200, sessionPayload(session)); return;
       }
       if (!session) throw new HttpError(401, '请先登录');
       if (req.method !== 'GET') {
@@ -179,10 +248,72 @@ export function createApp(config) {
       }
       if (req.method === 'POST' && url.pathname === '/api/logout') {
         sessions.prepare('DELETE FROM sessions WHERE id=?').run(session.id);
-        for (const [stream, listener] of listeners) if (listener.sessionId === session.id) stream.end();
+        for (const [stream, listener] of listeners) if (listener.sessionId === session.id) { stream.end(); listeners.delete(stream); }
         res.setHeader('Set-Cookie', `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure ? '; Secure' : ''}`);
         json(res, 200, { ok: true }); return;
       }
+      const ownerId = session.owner_id, store = rootStore.forOwner(ownerId);
+      const attachments = attachmentManager.forStore(store, () => accounts.requireActive(ownerId));
+      const status = deviceId => deviceStatus(deviceId, ownerId);
+      if (req.method === 'GET' && url.pathname === '/api/account') {
+        json(res, 200, { account: accounts.public(accounts.get(ownerId)) }); return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/account/password') {
+        limit(loginAttempts, `password:${ownerId}`, 8, 900000);
+        const data = await body(req); await accounts.changePassword(ownerId, data.currentPassword, data.newPassword);
+        revokeSessions(ownerId);
+        json(res, 200, { ok: true, loginRequired: true }); return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/account/delete') {
+        limit(loginAttempts, `delete:${ownerId}`, 5, 900000);
+        const data = await body(req);
+        if (data.confirmUsername !== accounts.get(ownerId).username || !await accounts.checkPassword(ownerId, data.password)) throw new HttpError(403, '请核对账号和密码');
+        await deleteAccount(ownerId, ownerId); json(res, 200, { ok: true }); return;
+      }
+      if (url.pathname.startsWith('/api/admin/')) {
+        accounts.requireAdmin(ownerId);
+        const target = url.pathname.match(/^\/api\/admin\/accounts\/([^/]+)(?:\/(password|delete))?$/);
+        const invitation = url.pathname.match(/^\/api\/admin\/invitations\/([^/]+)\/revoke$/);
+        if (req.method === 'GET' && url.pathname === '/api/admin/accounts') {
+          const offset = Number(url.searchParams.get('offset') || 0);
+          if (!Number.isSafeInteger(offset) || offset < 0) throw new HttpError(400, '分页参数无效');
+          json(res, 200, accounts.list((url.searchParams.get('q') || '').slice(0, 100), offset)); return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/admin/accounts') {
+          limit(loginAttempts, `admin-create:${ownerId}`, 30, 60000);
+          const account = await accounts.create(await body(req), ownerId); scheduleExpiry();
+          json(res, 201, { account: accounts.public(account) }); return;
+        }
+        if (req.method === 'GET' && url.pathname === '/api/admin/invitations') {
+          json(res, 200, { invitations: accounts.invitations() }); return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/admin/invitations') {
+          limit(loginAttempts, `invite:${ownerId}`, 30, 60000);
+          json(res, 201, accounts.invite(await body(req), ownerId)); return;
+        }
+        if (req.method === 'POST' && invitation) {
+          accounts.revokeInvitation(invitation[1], ownerId); json(res, 200, { ok: true }); return;
+        }
+        if (req.method === 'POST' && target) {
+          const [, id, action] = target, data = await body(req);
+          if (action === 'password') {
+            limit(loginAttempts, `admin-password:${ownerId}`, 30, 60000);
+            await accounts.resetPassword(id, data.password, ownerId); revokeSessions(id);
+            json(res, 200, { ok: true }); return;
+          }
+          if (action === 'delete') {
+            if (data.confirmUsername !== accounts.get(id)?.username) throw new HttpError(400, '请输入要删除的完整账号');
+            await deleteAccount(id, ownerId); json(res, 200, { ok: true }); return;
+          }
+          const account = accounts.update(id, data, ownerId); enforceAccount(id); scheduleExpiry();
+          json(res, 200, { account: accounts.public(account) }); return;
+        }
+        throw new HttpError(404, '找不到此管理操作');
+      }
+      // Expired accounts may read their own cache and revoke devices, but no new work is forwarded.
+      const cleanupRoute = /^\/api\/devices\/[a-f\d-]+\/(?:revoke|rename)$/i.test(url.pathname);
+      if (req.method !== 'GET' && !cleanupRoute) accounts.requireActive(ownerId);
+      if (accounts.access(accounts.get(ownerId)) !== 'active') enforceAccount(ownerId, false);
       if (req.method === 'GET' && url.pathname === '/api/agent-package') {
         headers(res, 'application/zip'); res.setHeader('Content-Disposition', 'attachment; filename="codex-phone-agent.zip"');
         res.end(readFileSync(resolve(ROOT, 'public/downloads/codex-phone-agent.zip'))); return;
@@ -192,9 +323,9 @@ export function createApp(config) {
         res.end(readFileSync(resolve(ROOT, 'public/downloads/CONNECT-ANOTHER-COMPUTER.md'))); return;
       }
       if (req.method === 'GET' && url.pathname === '/api/devices') {
-        json(res, 200, { primaryDeviceId: store.primaryDeviceId, devices: store.devices().map(d => ({ id: d.id, name: d.name, ...status(d.id) })) }); return;
+        json(res, 200, { account: accounts.public(accounts.get(ownerId)), primaryDeviceId: store.primaryDeviceId, devices: store.devices().map(d => ({ id: d.id, name: d.name, ...status(d.id) })) }); return;
       }
-      if (req.method === 'GET' && url.pathname === '/api/devices/events') { subscribe(req, res, session.id, null); return; }
+      if (req.method === 'GET' && url.pathname === '/api/devices/events') { subscribe(req, res, session.id, null, ownerId); return; }
       if (req.method === 'POST' && url.pathname === '/api/device-pairings') {
         limit(pairingAttempts, `create:${session.id}`, 20, 60000);
         const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -206,11 +337,11 @@ export function createApp(config) {
       const deviceRoute = url.pathname.match(/^\/api\/devices\/([a-f\d-]+)(\/.*)$/i);
       const deviceId = deviceRoute ? deviceRoute[1] : store.primaryDeviceId;
       const route = deviceRoute ? `/api${deviceRoute[2]}` : url.pathname;
-      if (!store.device(deviceId)) throw new HttpError(404, '找不到此电脑，可能已解绑');
+      if (!deviceId || !store.device(deviceId)) throw new HttpError(404, '找不到此电脑，可能已解绑');
       if (req.method === 'POST' && route === '/api/rename') {
         const data = await body(req), name = typeof data.name === 'string' ? data.name.trim() : '';
         if (!name || name.length > 80) throw new HttpError(400, '电脑名称应为 1–80 个字符');
-        store.rename(deviceId, name); broadcast(deviceId, 'status'); directoryChanged(); json(res, 200, { ok: true }); return;
+        store.rename(deviceId, name); broadcast(deviceId, 'status'); directoryChanged(ownerId); json(res, 200, { ok: true }); return;
       }
       if (req.method === 'POST' && route === '/api/revoke') {
         store.revoke(deviceId);
@@ -219,7 +350,7 @@ export function createApp(config) {
         for (const [stream, listener] of listeners) if (listener.deviceId === deviceId) {
           stream.write('event: revoked\ndata: {}\n\n'); stream.end(); listeners.delete(stream);
         }
-        directoryChanged(); json(res, 200, { ok: true }); return;
+        directoryChanged(ownerId); json(res, 200, { ok: true }); return;
       }
       if (req.method === 'GET' && route === '/api/status') { json(res, 200, status(deviceId)); return; }
       if (req.method === 'GET' && route === '/api/models') {
@@ -232,7 +363,7 @@ export function createApp(config) {
         const command = store.command(deviceId, commandId);
         json(res, 200, command ? { state: command.state, result: command.payload ? JSON.parse(command.payload) : null } : { state: 'not_found' }); return;
       }
-      if (req.method === 'GET' && route === '/api/events') { subscribe(req, res, session.id, deviceId); return; }
+      if (req.method === 'GET' && route === '/api/events') { subscribe(req, res, session.id, deviceId, ownerId); return; }
       if (req.method === 'POST' && route === '/api/threads') {
         if (!config.controlsEnabled || agents.get(deviceId)?.controls === false) throw new HttpError(403, '当前仅允许查看会话');
         const data = await body(req);
@@ -386,21 +517,22 @@ export function createApp(config) {
   server.requestTimeout = 75000; server.headersTimeout = 15000;
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024, perMessageDeflate: false });
   server.on('upgrade', (req, socket, head) => {
-    const auth = req.headers.authorization, identity = auth?.startsWith('Bearer ') ? store.authenticate(auth.slice(7)) : null;
-    if (req.url !== '/agent' || req.headers.origin || !identity || (req.headers['x-device-id'] && req.headers['x-device-id'] !== identity.id)) {
+    const auth = req.headers.authorization, identity = auth?.startsWith('Bearer ') ? rootStore.authenticateAny(auth.slice(7)) : null;
+    if (req.url !== '/agent' || req.headers.origin || !identity || accounts.access(accounts.get(identity.owner_id)) !== 'active' || (req.headers['x-device-id'] && req.headers['x-device-id'] !== identity.id)) {
       socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return;
     }
-    const deviceId = identity.id, previous = agents.get(deviceId);
+    const deviceId = identity.id, ownerId = identity.owner_id, store = rootStore.forOwner(ownerId), previous = agents.get(deviceId);
     if (previous && online(deviceId)) { socket.end('HTTP/1.1 409 Conflict\r\nConnection: close\r\n\r\n'); return; }
     if (previous) { disconnect(previous); previous.ws.terminate(); }
     wss.handleUpgrade(req, socket, head, ws => {
-      const connection = { id: randomUUID(), deviceId, ws, lastSeen: Date.now(), activeTurns: [], approvals: [] };
+      const connection = { id: randomUUID(), ownerId, deviceId, ws, lastSeen: Date.now(), activeTurns: [], approvals: [] };
       agents.set(deviceId, connection);
       ws.send(JSON.stringify({ type: 'hello', deviceId, connectionId: connection.id }));
       ws.on('error', () => {});
       ws.on('pong', () => { connection.lastSeen = Date.now(); });
       ws.on('message', raw => {
         if (agents.get(deviceId) !== connection) return;
+        if (!store.device(deviceId) || accounts.access(accounts.get(ownerId)) !== 'active') { disconnect(connection); ws.terminate(); return; }
         try {
           const msg = JSON.parse(raw.toString()); connection.lastSeen = Date.now();
           if (msg.type === 'snapshot' && Array.isArray(msg.threads) && msg.threads.length < 50000 && msg.threads.every(t => validThreadId(t.id))) {
@@ -409,11 +541,11 @@ export function createApp(config) {
             connection.capabilities = msg.info?.capabilities || {}; connection.version = msg.info?.version || null;
             connection.activeTurns = Array.isArray(msg.activeTurns) ? msg.activeTurns : [];
             connection.approvals = Array.isArray(msg.approvals) ? msg.approvals : [];
-            broadcast(deviceId, 'list'); directoryChanged();
+            broadcast(deviceId, 'list'); directoryChanged(ownerId);
           } else if (msg.type === 'state') {
             connection.activeTurns = Array.isArray(msg.activeTurns) ? msg.activeTurns : [];
             connection.approvals = Array.isArray(msg.approvals) ? msg.approvals : [];
-            broadcast(deviceId, 'status'); directoryChanged();
+            broadcast(deviceId, 'status'); directoryChanged(ownerId);
           }
           else if (msg.type === 'changed') broadcast(deviceId, 'changed', { threadId: msg.threadId });
           else if (msg.type === 'response' && lateResponses.get(msg.id)?.connection === connection) {
@@ -426,15 +558,16 @@ export function createApp(config) {
         } catch { /* Invalid frames never reach the browser. */ }
       });
       ws.on('close', () => disconnect(connection));
-      broadcast(deviceId, 'status'); directoryChanged();
+      broadcast(deviceId, 'status'); directoryChanged(ownerId);
     });
   });
   const heartbeat = setInterval(() => {
     for (const connection of agents.values()) {
-      if (!online(connection.deviceId)) { disconnect(connection); connection.ws.terminate(); } else connection.ws.ping();
+      if (accounts.access(accounts.get(connection.ownerId)) !== 'active' || !online(connection.deviceId)) { disconnect(connection); connection.ws.terminate(); } else connection.ws.ping();
     }
     for (const [res, listener] of listeners) {
-      if (!sessions.prepare('SELECT id FROM sessions WHERE id=? AND expires>?').get(listener.sessionId, Date.now())) { res.end(); listeners.delete(res); }
+      const account = accounts.get(listener.ownerId);
+      if (!account || account.status !== 'active' || !sessions.prepare('SELECT id FROM sessions WHERE id=? AND expires>?').get(listener.sessionId, Date.now())) { res.end(); listeners.delete(res); }
       else res.write(': keepalive\n\n');
     }
     sessions.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
@@ -442,15 +575,17 @@ export function createApp(config) {
     for (const [key, item] of lateResponses) if (item.expires < Date.now()) lateResponses.delete(key);
   }, 15000);
   heartbeat.unref();
-  const attachmentCleanup = setInterval(() => attachments.ready.then(() => attachments.cleanup()).catch(() => {}), 3600000);
+  const attachmentCleanup = setInterval(() => attachmentManager.ready.then(() => attachmentManager.cleanup()).catch(() => {}), 3600000);
   attachmentCleanup.unref();
-  attachments.ready.then(() => attachments.cleanup()).catch(() => {});
-  return { server, store, status, close: async () => {
-    if (closing) return; closing = true; clearInterval(heartbeat); clearInterval(attachmentCleanup);
+  attachmentManager.ready.then(() => attachmentManager.cleanup()).catch(() => {});
+  scheduleExpiry();
+  return { server, store: rootStore, accounts, status: deviceStatus, close: async () => {
+    if (closing) return; closing = true; clearTimeout(expiryTimer); clearInterval(heartbeat); clearInterval(attachmentCleanup);
     for (const res of listeners.keys()) res.end();
     for (const connection of agents.values()) { disconnect(connection); connection.ws.terminate(); }
     wss.close();
-    await new Promise(resolveClose => server.close(resolveClose)); store.close();
+    await attachmentManager.ready.catch(() => {});
+    await new Promise(resolveClose => server.close(resolveClose)); rootStore.close();
   } };
 }
 

@@ -58,10 +58,20 @@ export class Store {
           .run(ownerId, this.primaryDeviceId);
         this.db.exec("DELETE FROM meta WHERE key IN ('sidebar','lastSync')");
       }
-      this.db.exec("UPDATE commands SET state='unknown' WHERE state='pending'; PRAGMA user_version=2; COMMIT");
+      this.db.exec("UPDATE commands SET state='unknown' WHERE state='pending';");
+      if (this.db.prepare('PRAGMA user_version').get().user_version < 2) this.db.exec('PRAGMA user_version=2');
+      this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); this.db.close(); throw error; }
   }
   scope(deviceId = this.primaryDeviceId) { return [this.ownerId, deviceId]; }
+  forOwner(ownerId) {
+    if (typeof ownerId !== 'string' || !ownerId) throw new Error('An authenticated owner is required');
+    const scoped = Object.create(Store.prototype);
+    scoped.db = this.db; scoped.ownerId = ownerId;
+    scoped.primaryDeviceId = ownerId === this.ownerId && this.device(this.primaryDeviceId) ? this.primaryDeviceId
+      : this.db.prepare('SELECT id FROM devices WHERE owner_id=? AND revoked=0 ORDER BY created,id LIMIT 1').get(ownerId)?.id || null;
+    return Object.freeze(scoped);
+  }
   initializePrimary(token) {
     if (token) this.db.prepare('UPDATE devices SET token_hash=? WHERE owner_id=? AND id=? AND token_hash IS NULL AND revoked=0')
       .run(credentialHash(token), ...this.scope());
@@ -71,6 +81,10 @@ export class Store {
   authenticate(token) {
     if (typeof token !== 'string' || token.length > 512) return null;
     return this.db.prepare('SELECT owner_id,id FROM devices WHERE token_hash=? AND owner_id=? AND revoked=0').get(credentialHash(token), this.ownerId);
+  }
+  authenticateAny(token) {
+    if (typeof token !== 'string' || token.length > 512) return null;
+    return this.db.prepare('SELECT owner_id,id FROM devices WHERE token_hash=? AND revoked=0').get(credentialHash(token));
   }
   rename(id, name) { this.db.prepare('UPDATE devices SET name=?,auto_name=0 WHERE owner_id=? AND id=? AND revoked=0').run(name, ...this.scope(id)); }
   computerName(id, name) {
