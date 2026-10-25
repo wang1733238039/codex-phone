@@ -1,0 +1,16 @@
+node_modules/
+.data/
+.env
+.env.*
+!.env.example
+data/
+backups/
+artifacts/
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+# Local investigations of personal conversations are not part of the release.
+tools/inspect-phone-target.mjs
+tools/stop-inbox-test.mjs

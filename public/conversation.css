@@ -1,0 +1,87 @@
+/* Reading first: compact composer, explicit speakers, settings out of the transcript. */
+.chat-header,.composer-wrap,.execution-status,.queue-panel{flex-shrink:0}
+.messages{padding-top:24px;padding-bottom:24px}
+.message{margin-bottom:32px}
+.message.user{width:fit-content;max-width:90%;margin-left:auto}
+.message.user .message-meta{justify-content:flex-end;margin-bottom:6px}
+.message.user .message-role{color:var(--accent)}
+.message.user .message-body{background:var(--accent);color:var(--surface);border-radius:18px 18px 4px 18px;padding:12px 16px;font-size:15px;line-height:1.75}
+.message.assistant{margin-right:0}
+.message.assistant .message-meta{gap:8px;margin-bottom:12px}
+.message.assistant .message-role{display:inline-flex;align-items:center;gap:8px;font-weight:650}
+.message.assistant .message-role::before{content:"";width:8px;height:8px;border:2px solid var(--accent);border-radius:3px}
+.message.assistant .message-body{font-size:16px;line-height:1.85}
+.message-time{font-size:11px}
+.composer-wrap{padding-top:8px;border-top:1px solid var(--line)}
+.composer-status:empty,.composer-status[hidden]{display:none}
+.composer-status{min-height:0;padding:0 4px 6px;color:#795020}
+.composer{border-radius:16px}
+.composer textarea{min-height:44px;height:44px;max-height:128px;resize:none;padding:10px 14px;line-height:24px;overflow-y:auto}
+.composer-actions{gap:4px;flex-wrap:nowrap;padding:0 6px 6px;min-height:44px}
+.composer-actions .attachment-button{margin-right:0;padding:0;min-width:44px;width:44px;height:44px;border:0;border-radius:10px}
+.composer-actions .keyboard-hint{min-width:0;flex:1;margin:0;padding:0 4px;text-align:right}
+.composer-settings-button{display:inline-flex;align-items:center;gap:6px;min-width:44px;min-height:44px;max-width:55%;padding:4px 8px;border:0;border-radius:10px;background:transparent;color:var(--muted);font-size:12px}
+.composer-settings-button:hover{background:var(--accent-soft);color:var(--accent)}
+.composer-settings-button svg{width:20px;height:20px}
+.composer-settings-button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.composer-settings-button.has-overrides{color:var(--accent);background:var(--accent-soft)}
+.composer-actions #send-button{min-width:44px;width:44px;height:44px;min-height:44px;flex-shrink:0;padding:0;border-radius:12px;margin-left:4px}
+.composer-actions #send-button svg{width:20px;height:20px}
+.composer-actions #stop-button{padding:6px 12px;margin-left:auto;white-space:nowrap;color:var(--red)}
+.delivery-status{font-size:12px;line-height:1.5;margin:0 4px 6px;max-height:48px;overflow:auto}
+#composer-settings-dialog{max-height:calc(100dvh - 32px);overflow-y:auto}
+#composer-settings-dialog .composer-options{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;padding:20px 0}
+#composer-settings-dialog .composer-options label{display:grid;grid-template-columns:80px minmax(0,1fr);align-items:center;gap:12px;font-size:14px}
+#composer-settings-dialog .composer-options select{width:100%;font-size:14px;min-height:44px;padding:8px}
+#composer-settings-dialog .models-note{padding:0;margin-bottom:12px;font-size:12px;line-height:1.7}
+#composer-settings-dialog .attachment-note{padding:0;margin-bottom:20px;font-size:12px;line-height:1.7}
+.settings-intro{font-size:12px;color:var(--muted);line-height:1.7}
+.result-filters{display:flex;gap:8px;padding:0 24px 8px;flex-shrink:0}
+.result-filters button{border:1px solid var(--line);border-radius:20px;background:var(--surface);font-size:12px;padding:6px 12px;min-height:44px;color:var(--muted)}
+.result-filters button[aria-pressed=true]{background:var(--accent-soft);border-color:#becbf5;color:var(--accent);font-weight:650}
+#unread-count{font-variant-numeric:tabular-nums;margin-left:4px}
+.thread-result-status{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px;font-size:11px;color:var(--muted)}
+.result-badge{display:inline-block;border-radius:5px;padding:1px 6px;background:#e6ebf3;color:var(--muted)}
+.result-badge.unread{background:var(--accent);color:var(--surface);font-weight:650}
+.result-badge.completed{background:#e5f2ec;color:var(--green)}
+.result-badge.running{background:var(--accent-soft);color:var(--accent)}
+.result-badge.warning{background:#fff1dd;color:#795020}
+.has-unread-result .thread-title{color:var(--accent)}
+.new-thread-form{display:grid;gap:16px;padding-top:16px}
+.new-thread-form label{display:grid;gap:8px;font-size:14px;font-weight:600}
+.new-thread-form label>span{display:inline;color:var(--muted);font-size:12px;font-weight:400}
+.new-thread-form input,.new-thread-form select{min-width:0;width:100%;font:inherit;min-height:44px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);padding:8px 12px}
+#new-thread-dialog{max-height:calc(100dvh - 32px);overflow-y:auto}
+@media(max-width:760px){
+  .result-filters{padding:0 20px 6px}
+  .app-shell,.conversation{height:var(--app-height,100dvh)}
+  .sidebar{height:calc(var(--app-height,100dvh) - 68px - env(safe-area-inset-bottom))}
+  .chat-header:has(.chat-device){min-height:76px;padding-top:max(8px,env(safe-area-inset-top));padding-bottom:8px}
+  .chat-header p{margin-top:0}
+  .chat-device{min-height:24px;font-size:11px}
+  .chat-header h2{font-size:15px}
+  .chat-header .badge{max-width:72px;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+  .messages{padding:18px 16px 20px}
+  .message.user{max-width:91%;margin-bottom:26px}
+  .message.assistant{margin-bottom:30px}
+  .message.user .message-body{padding:11px 14px;font-size:15px}
+  .message.assistant .message-body{font-size:16px}
+  .composer-wrap{padding:8px 10px max(8px,env(safe-area-inset-bottom))}
+  .composer textarea{min-height:44px;max-height:112px;padding:10px 12px}
+  .composer-actions{padding:0 4px 4px}
+  .composer-actions .keyboard-hint{display:none}
+  .composer-settings-button{margin-right:auto;max-width:calc(100% - 140px)}
+  .execution-status{padding:5px 16px;font-size:11px;line-height:1.5;max-height:43px;overflow:auto}
+  .queue-panel{margin:0 16px;max-height:22dvh}
+  .queue-panel summary{min-height:36px}
+  .attachment-drafts{max-height:88px;gap:4px}
+  #composer-settings-dialog{padding:20px}
+}
+@media(max-width:760px) and (max-height:520px){
+  .chat-header:has(.chat-device){min-height:56px}
+  .chat-header #chat-project,.chat-header .chat-device{display:none}
+  .composer-wrap{padding-top:4px;padding-bottom:max(4px,env(safe-area-inset-bottom))}
+  .composer textarea{max-height:72px}
+  .delivery-status{max-height:30px;margin-bottom:4px}
+  .execution-status{max-height:26px}
+}

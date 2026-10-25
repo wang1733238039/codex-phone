@@ -1,0 +1,32 @@
+services:
+  phone:
+    image: codex-phone:local
+    build:
+      context: ..
+    restart: unless-stopped
+    environment:
+      SERVER_CONFIG: /app/data/server.json
+    ports:
+      - "127.0.0.1:3819:3819"
+    volumes:
+      - ../data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3819/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

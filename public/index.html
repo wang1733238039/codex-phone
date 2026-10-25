@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f6fb">
+  <meta name="description" content="在手机上查看和继续本机 Codex 会话。">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/conversation.css">
+  <title>Codex 随行</title>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <section id="login-view" class="login-view" hidden>
+    <div class="login-card">
+      <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="m12 9-7 7 7 7m8-14 7 7-7 7m-3-18-2 24"/></svg></div>
+      <p class="eyebrow">YOUR WORK, WITH YOU</p>
+      <h1>Codex 随行<span>离开电脑，也能继续。</span></h1>
+      <p class="login-description">你的会话、进展和下一条指令，<br>在这里接上。</p>
+      <form id="login-form">
+        <label for="username">账号</label>
+        <input id="username" name="username" autocomplete="username" value="admin" required maxlength="100">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="500">
+        <p id="login-error" class="error" role="alert" hidden></p>
+        <button id="login-button" class="primary" type="submit">登录控制台 <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="login-footnote">连接你自己的电脑 · 使用现有 Codex 配置</p>
+    </div>
+    <p class="login-bottom">CODEX / PERSONAL CONSOLE</p>
+  </section>
+
+  <div id="app-view" class="app-shell" hidden>
+    <aside class="sidebar" aria-label="会话导航">
+      <header class="brand-row">
+        <div class="brand-mark small" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="m12 9-7 7 7 7m8-14 7 7-7 7m-3-18-2 24"/></svg></div>
+        <div><strong class="brand-name">Codex 随行</strong><span class="brand-subtitle">你的工作，随时接上</span></div>
+        <button class="icon-button desktop-status" data-action="status" aria-label="连接信息"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></svg></button>
+      </header>
+      <button id="device-button" class="device-switch" type="button" data-action="devices" aria-label="切换或管理电脑" aria-haspopup="dialog">
+        <svg aria-hidden="true"><use href="/device-icons.svg#monitor"/></svg><span id="device-label">选择电脑</span><svg aria-hidden="true"><use href="/device-icons.svg#chevron-down"/></svg>
+      </button>
+      <div class="connection-strip"><span id="connection-dot" class="status-dot"></span><span id="connection-label">正在连接电脑</span><span id="connection-time"></span></div>
+      <div class="list-heading"><h1 id="list-title">会话</h1><span id="thread-count" class="count">—</span><button id="new-thread-button" class="icon-button refresh-button" type="button" aria-label="新建对话" aria-haspopup="dialog" title="新建对话"><svg aria-hidden="true"><use href="/device-icons.svg#plus"/></svg></button><button class="icon-button" data-action="refresh" aria-label="刷新会话"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 11.5-2L20 8M4 16l2.5 3A7 7 0 0 0 18 17"/></svg></button></div>
+      <label class="search-box" for="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" autocomplete="off" placeholder="搜索会话、内容摘要或项目" aria-label="搜索会话"></label>
+      <nav class="desktop-tabs" aria-label="会话分类"><button class="tab active" data-view="recent" aria-current="page">最近会话</button><button class="tab" data-view="archived">已归档</button></nav>
+      <div id="list-error" class="inline-notice" role="alert" hidden></div>
+      <nav id="result-filters" class="result-filters" aria-label="结果筛选"><button type="button" data-result-filter="all" aria-pressed="true">全部</button><button id="unread-results" type="button" data-result-filter="unread" aria-pressed="false">未读结果 <span id="unread-count">0</span></button></nav>
+      <div class="group-toolbar"><span id="group-summary">项目分类</span><button id="collapse-groups" class="text-button" type="button">全部收起</button></div>
+      <nav id="thread-list" class="thread-list" aria-label="会话列表" aria-live="polite"></nav>
+      <footer class="sidebar-footer"><span id="computer-name">我的电脑</span><button class="text-button" data-action="logout">退出登录</button></footer>
+    </aside>
+
+    <main id="main" class="conversation" tabindex="-1">
+      <div id="welcome" class="welcome">
+        <div class="welcome-symbol" aria-hidden="true"><svg viewBox="0 0 64 64"><rect x="8" y="10" width="38" height="30" rx="5"/><path d="M17 49h20m-10-9v9"/><rect x="39" y="28" width="17" height="29" rx="4"/><path d="M46 51h3M18 20l6 5-6 5m11 0h8"/></svg></div>
+        <p class="eyebrow">PICK UP WHERE YOU LEFT OFF</p><h2>把工作带在身边</h2><p>选择一个会话，查看最新进展。<br>电脑在线时，可以从这里继续。</p>
+        <span class="welcome-note">会话来自你的电脑 · 已打开的历史自动缓存</span>
+      </div>
+      <section id="chat" class="chat" aria-label="聊天详情" hidden>
+        <header class="chat-header">
+          <button class="icon-button back-button" data-action="back" aria-label="返回会话列表"><svg viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></svg></button>
+          <div class="chat-heading"><button id="chat-device-button" class="chat-device" type="button" data-action="devices" aria-label="切换电脑" aria-haspopup="dialog"><span id="chat-device-name">选择电脑</span><svg aria-hidden="true"><use href="/device-icons.svg#chevron-down"/></svg></button><h2 id="chat-title"></h2><p id="chat-project"></p></div>
+          <span id="chat-badge" class="badge">历史</span>
+        </header>
+        <div id="cache-banner" class="cache-banner" role="status" hidden></div>
+        <div id="execution-status" class="execution-status" role="status"></div>
+        <details id="queue-panel" class="queue-panel" hidden><summary id="queue-summary">待执行消息</summary><div id="queue-list"></div></details>
+        <div id="messages" class="messages" tabindex="0" aria-label="聊天记录" aria-busy="false"></div>
+        <div id="approval-panel" class="approval-panel" hidden></div>
+        <footer class="composer-wrap">
+          <p id="composer-status" class="composer-status"></p>
+          <p id="delivery-status" class="delivery-status" role="status" hidden></p>
+          <form id="composer" class="composer">
+            <div id="attachment-drafts" class="attachment-drafts" aria-label="本条消息的材料" hidden></div>
+            <input id="attachment-input" type="file" multiple class="sr-only" tabindex="-1" aria-label="选择图片、文件或视频">
+            <label class="sr-only" for="message">发送消息</label><textarea id="message" rows="1" maxlength="32000" placeholder="发消息，或继续追加指令…"></textarea>
+            <div class="composer-actions">
+              <button id="attach-button" class="icon-button attachment-button" type="button" aria-label="添加图片、文件或视频" title="添加材料"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 6-6a4 4 0 0 1 6 6L9 22a6 6 0 0 1-8-8L12 3m-7 12 9-9a2 2 0 0 1 3 3l-9 9"/></svg></button>
+              <button id="composer-settings-button" class="composer-settings-button" type="button" data-action="composer-settings" aria-haspopup="dialog" aria-controls="composer-settings-dialog" aria-label="消息设置：模型、思考和发送方式"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10m4 0h2M4 17h2m4 0h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg><span id="composer-settings-label">设置</span></button>
+              <span class="keyboard-hint">Ctrl / ⌘ Enter 发送</span>
+              <button id="stop-button" class="secondary" type="button" data-action="stop" hidden>停止</button>
+              <button id="send-button" class="primary" type="submit" aria-label="发送消息"><span id="send-label" class="sr-only">发送消息</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>
+            </div>
+          </form>
+        </footer>
+      </section>
+    </main>
+    <nav class="mobile-nav" aria-label="主要导航"><button class="active" data-view="recent" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v13H9l-4 4V4Z"/><path d="M9 8h6m-6 4h4"/></svg><span>会话</span></button><button data-view="archived"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v12H4zM3 4h18v4H3zm7 8h4"/></svg><span>归档</span></button><button data-action="status"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span>连接</span></button></nav>
+  </div>
+
+  <dialog id="status-dialog"><form method="dialog" class="dialog-heading"><h2>连接信息</h2><button class="icon-button" aria-label="关闭连接信息">×</button></form><div id="status-detail"></div><p class="dialog-note">电脑需要保持开机并运行连接程序。离线时可查看已缓存的列表和历史。</p><button class="secondary full" data-action="logout">退出登录</button></dialog>
+  <dialog id="composer-settings-dialog" aria-labelledby="composer-settings-title">
+    <form method="dialog" class="dialog-heading"><h2 id="composer-settings-title">消息设置</h2><button class="icon-button" aria-label="关闭消息设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
+    <p class="settings-intro">模型与思考设置按电脑和会话保存；发送方式只用于本次操作。</p>
+    <div class="composer-options">
+      <label for="model-select">模型<select id="model-select" aria-label="下一轮模型"><option value="">跟随会话</option></select></label>
+      <label for="effort-select">思考强度<select id="effort-select" aria-label="思考强度"><option value="">跟随模型</option></select></label>
+      <label for="send-mode">发送方式<select id="send-mode" aria-label="发送方式"><option value="auto">正常 / 排队</option><option value="steer">补充本轮</option></select></label>
+    </div>
+    <p id="models-note" class="models-note"></p>
+    <p id="attachment-note" class="attachment-note"></p>
+    <form method="dialog"><button class="primary full" type="submit">完成</button></form>
+  </dialog>
+  <dialog id="devices-dialog" aria-labelledby="devices-title">
+    <form method="dialog" class="dialog-heading"><h2 id="devices-title">我的电脑</h2><button class="icon-button" aria-label="关闭电脑列表"><svg aria-hidden="true"><use href="/device-icons.svg#x"/></svg></button></form>
+    <div id="devices-list" class="devices-list"></div>
+    <div class="pair-toolbar"><button id="pair-button" class="secondary" type="button" data-action="pair"><svg aria-hidden="true"><use href="/device-icons.svg#plus"/></svg>添加电脑</button><a href="/api/connection-guide" class="text-button download-link" download>接入文档</a><a href="/api/agent-package" class="text-button download-link" download>下载连接程序</a></div>
+    <div id="pair-result" class="pair-result" hidden><div class="pair-code-row"><output id="pair-code" aria-label="一次性配对码"></output><button class="icon-button" type="button" data-action="copy-pair" aria-label="复制配对码" title="复制配对码"><svg aria-hidden="true"><use href="/device-icons.svg#copy"/></svg></button></div><p id="pair-expiry" class="pair-expiry"></p></div>
+  </dialog>
+  <dialog id="new-thread-dialog" aria-labelledby="new-thread-title">
+    <form method="dialog" class="dialog-heading"><h2 id="new-thread-title">新建对话</h2><button class="icon-button" aria-label="关闭新建对话"><svg aria-hidden="true"><use href="/device-icons.svg#x"/></svg></button></form>
+    <p id="new-thread-computer" class="settings-intro"></p>
+    <form id="new-thread-form" class="new-thread-form">
+      <label for="new-thread-project">项目与目录<select id="new-thread-project" required></select></label>
+      <label for="new-thread-name">对话标题 <span>可选</span><input id="new-thread-name" maxlength="120" placeholder="例如：整理下周的工作计划" autocomplete="off"></label>
+      <p class="settings-intro">使用所选电脑现有 Codex 配置。创建后即可发送第一条消息和材料。</p>
+      <p id="new-thread-error" class="error" role="alert" hidden></p>
+      <button id="create-thread-submit" class="primary full" type="submit">创建并打开</button>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/vendor/marked.js" defer></script>
+  <script src="/vendor/purify.js" defer></script>
+  <script src="/attachments.js" defer></script>
+  <script src="/inbox.js" defer></script>
+  <script src="/app.js" defer></script>
+</body>
+</html>

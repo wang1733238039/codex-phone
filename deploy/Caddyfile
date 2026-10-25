@@ -1,0 +1,6 @@
+{$PHONE_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy phone:3819 {
+        flush_interval -1
+    }
+}

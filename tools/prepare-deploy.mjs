@@ -1,0 +1,11 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { ROOT, loadConfig } from '../src/config.mjs';
+const target = new URL(process.argv[2] || 'invalid');
+if (target.protocol !== 'https:' || target.pathname !== '/' || target.port || target.username || target.password || target.search || target.hash) throw new Error('Usage: node tools/prepare-deploy.mjs https://your-domain.example');
+const { configPath, ...config } = loadConfig('server');
+const dir = resolve(ROOT, '.data', 'deploy'); mkdirSync(dir, { recursive: true, mode: 0o700 });
+const server = { ...config, host: '0.0.0.0', port: 3819, database: '/app/data/cache.sqlite', publicUrl: target.origin, allowedHosts: [target.hostname, '127.0.0.1', 'localhost'] };
+writeFileSync(resolve(dir, 'server.json'), JSON.stringify(server, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+writeFileSync(resolve(dir, '.env'), `PHONE_DOMAIN=${target.hostname}\n`, { encoding: 'utf8', mode: 0o600 });
+console.log(`Deployment files prepared in ${dir}. Keep server.json private; it contains the agent token.`);
