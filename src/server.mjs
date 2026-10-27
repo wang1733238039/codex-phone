@@ -140,7 +140,7 @@ export function createApp(config) {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     if (secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   }
   function json(res, code, body) { headers(res); res.writeHead(code); res.end(JSON.stringify(body)); }

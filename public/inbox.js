@@ -11,9 +11,31 @@ function resultBaseline() {
 function hasUnreadResult(thread) {
   const activity = thread.activity;
   if (!activity?.resultKey || !activity.resultAt || activity.resultAt < resultBaseline()) return false;
-  if (state.resultSeen.has(`${scopeKey(thread.id)}:${activity.resultKey}`)) return false;
-  try { return localStorage.getItem(`codex-phone-result-seen:${scopeKey(thread.id)}`) !== activity.resultKey; }
+  const scope = scopeKey(thread.id);
+  if (state.resultSeen.has(`${scope}:${activity.resultKey}`) || activity.resultAt <= (state.resultReadAt.get(scope) || 0)) return false;
+  try { return localStorage.getItem(`codex-phone-result-seen:${scope}`) !== activity.resultKey &&
+    activity.resultAt > Number(localStorage.getItem(`codex-phone-result-read-at:${scope}`) || 0); }
   catch { return !state.resultSeen.has(`${scopeKey(thread.id)}:${activity.resultKey}`); }
+}
+function resultReceipt(threadId = state.selected, deviceId = state.deviceId) {
+  if (deviceId !== state.deviceId) return null;
+  const activity = state.threads.find(thread => thread.id === threadId)?.activity;
+  return activity?.resultKey && activity.resultAt ? {
+    scope: scopeKey(threadId, deviceId), resultKey: activity.resultKey, resultAt: activity.resultAt,
+  } : null;
+}
+function rememberReadResult(receipt) {
+  if (!receipt) return;
+  const { scope, resultKey, resultAt } = receipt;
+  state.resultSeen.add(`${scope}:${resultKey}`);
+  let readAt = Math.max(state.resultReadAt.get(scope) || 0, resultAt);
+  try {
+    readAt = Math.max(readAt, Number(localStorage.getItem(`codex-phone-result-read-at:${scope}`)) || 0);
+    localStorage.setItem(`codex-phone-result-seen:${scope}`, resultKey);
+    localStorage.setItem(`codex-phone-result-read-at:${scope}`, String(readAt));
+  } catch {}
+  state.resultReadAt.set(scope, readAt);
+  renderList();
 }
 function resultState(thread) {
   if (state.status.activeTurns?.some(t => t.threadId === thread.id)) return { text: '正在执行', kind: 'running' };
@@ -48,12 +70,18 @@ function appendResultStatus(row, thread) {
 }
 function markResultRead() {
   const thread = state.threads.find(t => t.id === state.selected), activity = thread?.activity, box = $('messages');
-  if (!hasUnreadResult(thread || {}) || document.hidden || $('chat').hidden ||
-      box.scrollHeight - box.scrollTop - box.clientHeight > 120) return;
-  const finals = (state.detail?.messages || []).filter(m => m.role === 'assistant' && m.phase === 'final_answer');
-  if (!finals.some(m => Date.parse(m.time) >= activity.resultAt - 1000)) return;
-  try { localStorage.setItem(`codex-phone-result-seen:${scopeKey(thread.id)}`, activity.resultKey); } catch {}
-  state.resultSeen.add(`${scopeKey(thread.id)}:${activity.resultKey}`); renderList();
+  if (!hasUnreadResult(thread || {}) || document.hidden || $('chat').hidden || document.querySelector('dialog[open]') || !state.detail) return;
+  const messages = state.detail.messages || [];
+  // A later reply acknowledges the previous result even while the next task is running.
+  if (messages.some(message => message.role === 'user' && Date.parse(message.time) > activity.resultAt)) {
+    rememberReadResult(resultReceipt()); return;
+  }
+  const bounds = box.getBoundingClientRect();
+  for (const marker of box.querySelectorAll('.result-read-marker')) {
+    const message = messages[Number(marker.dataset.messageIndex)], end = marker.getBoundingClientRect();
+    if (!message || end.bottom < bounds.top || end.top > bounds.bottom || end.width === 0) continue;
+    if (Date.parse(message.time) >= activity.resultAt - 1000) { rememberReadResult(resultReceipt()); return; }
+  }
 }
 function syncResultNotice(previous, incoming) {
   if (!state.listReady) { state.listReady = true; return; }
@@ -66,6 +94,14 @@ document.querySelectorAll('[data-result-filter]').forEach(button => button.addEv
   state.resultFilter = button.dataset.resultFilter; renderList(); $('thread-list').scrollTop = 0;
 }));
 document.getElementById('messages').addEventListener('scroll', () => markResultRead(), { passive: true });
+const resultReadObserver = new IntersectionObserver(() => markResultRead(), { root: document.getElementById('messages') });
+function observeReadResults() {
+  resultReadObserver.disconnect();
+  document.querySelectorAll('.result-read-marker').forEach(marker => resultReadObserver.observe(marker));
+}
+window.addEventListener('storage', event => {
+  if (event.key?.startsWith('codex-phone-result-')) renderList();
+});
 
 function creationReceiptKey(deviceId = state.deviceId) { return `codex-phone-create:${scopeKey('new', deviceId)}`; }
 function showCreateDialog() {

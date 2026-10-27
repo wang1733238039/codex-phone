@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const state = { csrf: '', username: '', primaryDeviceId: '', deviceId: '', devices: [], directoryStream: null,
   view: 'recent', threads: [], groups: [], selected: null, detail: null, status: {}, stream: null, listSeq: 0, detailSeq: 0,
   pending: null, drafts: new Map(), sending: new Set(), deviceViews: new Map(), deviceSeq: 0, directorySeq: 0,
-  models: [], modelError: '', options: new Map(), projects: [], resultFilter: 'all', resultSeen: new Set(), listReady: false };
+  models: [], modelError: '', options: new Map(), projects: [], resultFilter: 'all', resultSeen: new Set(), resultReadAt: new Map(), listReady: false };
 let toastTimer, searchTimer, refreshTimer, polling, runningRefreshTimer, deliveryTimer, runningRefreshAt = 0;
 const scopeKey = (threadId, deviceId = state.deviceId) => `${state.username}:${deviceId}:${threadId}`;
 const deviceApi = (path, data, deviceId = state.deviceId) => api(`/api/devices/${deviceId}${path}`, data);
@@ -28,7 +28,7 @@ async function api(path, data) {
 }
 function showLogin() {
   PhoneAccounts.clear();
-  $('new-thread-dialog').close(); state.resultSeen.clear(); state.listReady = false; state.projects = [];
+  $('new-thread-dialog').close(); state.resultSeen.clear(); state.resultReadAt.clear(); state.listReady = false; state.projects = [];
   $('composer-settings-dialog').close(); clearTimeout(deliveryTimer);
   PhoneAttachments.reset();
   state.csrf = ''; state.stream?.close(); state.directoryStream?.close(); clearInterval(polling); clearTimeout(runningRefreshTimer); runningRefreshTimer = null; state.selected = null; state.detail = null; state.threads = []; state.listSeq++; state.detailSeq++; state.deviceSeq++; state.directorySeq++;
@@ -344,7 +344,7 @@ function renderMessages(initial = false, prepended = false) {
   const box = $('messages'), beforeHeight = box.scrollHeight, beforeTop = box.scrollTop, nearBottom = beforeHeight - beforeTop - box.clientHeight < 120;
   const fragment = document.createDocumentFragment(), detail = state.detail;
   if (detail.before != null) { const wrap = el('div', 'older-wrap'), button = el('button', 'secondary', '加载更早的消息'); button.onclick = () => older(button); wrap.append(button); fragment.append(wrap); }
-  for (const message of detail.messages) {
+  for (const [messageIndex, message] of detail.messages.entries()) {
     if (message.role !== 'user' && !(message.role === 'assistant' && message.phase === 'final_answer')) continue;
     const article = el('article', `message ${message.role}`), meta = el('div', 'message-meta'), body = el('div', 'message-body');
     article.setAttribute('aria-label', message.role === 'user' ? '你的消息' : 'Codex 回复');
@@ -353,13 +353,19 @@ function renderMessages(initial = false, prepended = false) {
       body.innerHTML = DOMPurify.sanitize(marked.parse(message.text || '', { breaks: true }), { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'picture', 'video', 'audio', 'source', 'iframe', 'style', 'form', 'input', 'button', 'textarea'], FORBID_ATTR: ['style', 'src', 'srcset', 'id', 'name'] });
       body.querySelectorAll('a').forEach(a => { if (!/^https?:\/\//i.test(a.getAttribute('href') || '')) { a.removeAttribute('href'); } else { a.target = '_blank'; a.rel = 'noopener noreferrer'; } });
     } else { body.textContent = message.text; body.hidden = !message.text?.trim(); }
-    article.append(meta, body); if (message.role === 'user' && message.attachments?.length) article.append(PhoneAttachments.cards(message.attachments)); fragment.append(article);
+    article.append(meta, body); if (message.role === 'user' && message.attachments?.length) article.append(PhoneAttachments.cards(message.attachments));
+    if (message.role === 'assistant') {
+      const marker = el('span', 'result-read-marker'); marker.dataset.messageIndex = String(messageIndex);
+      marker.setAttribute('aria-hidden', 'true'); article.append(marker);
+    }
+    fragment.append(article);
   }
   if (!detail.messages.length) fragment.append(el('div', 'list-empty', '这段会话还没有聊天记录。'));
   box.replaceChildren(fragment);
   if (prepended) box.scrollTop = beforeTop + box.scrollHeight - beforeHeight;
   else if (initial || nearBottom) box.scrollTop = box.scrollHeight;
   else box.scrollTop = beforeTop;
+  observeReadResults();
 }
 async function older(button) {
   const id = state.selected, deviceId = state.deviceId, seq = state.deviceSeq, cursor = state.detail?.before; if (cursor == null) return; button.disabled = true;
@@ -478,6 +484,8 @@ $('composer').addEventListener('submit', async event => {
   const choice = modelOptions(), mode = $('send-mode').value,
     options = { ...(choice.model && mode !== 'steer' ? { model: choice.model, effort: choice.effort || undefined } : {}), mode };
   const receipt = { id: requestId, submitted, attachmentIds, createdAt: Date.now() };
+  // Capture only the result present when the user replies, never a reply arriving during submission.
+  rememberReadResult(resultReceipt(id, deviceId));
   state.sending.add(key); state.drafts.set(key, submitted);
   try { localStorage.setItem(`codex-phone-pending:${key}`, JSON.stringify([...readPendingEntries(id, deviceId), receipt])); } catch {}
   state.pending = readPending(id, deviceId) || receipt; delivery('正在提交到电脑；此时可以继续编辑下一条。'); updateComposer();

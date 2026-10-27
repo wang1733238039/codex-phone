@@ -216,6 +216,21 @@
       <button id="create-thread-submit" class="primary full" type="submit">创建并打开</button>
     </form>
   </dialog>
+  <dialog id="attachment-preview-dialog" class="attachment-preview-dialog" aria-labelledby="attachment-preview-title">
+    <header class="attachment-preview-header">
+      <div><h2 id="attachment-preview-title">图片预览</h2><p id="attachment-preview-name"></p></div>
+      <form method="dialog"><button class="icon-button" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
+    </header>
+    <div id="attachment-preview-viewport" class="attachment-preview-viewport">
+      <img id="attachment-preview-image" class="attachment-preview-image" alt="">
+      <p id="attachment-preview-status" role="status">正在加载图片…</p>
+    </div>
+    <footer class="attachment-preview-actions">
+      <button id="attachment-preview-zoom" class="secondary" type="button" aria-pressed="false">放大查看</button>
+      <button id="attachment-preview-retry" class="secondary" type="button" hidden>重新加载</button>
+      <a id="attachment-preview-download" class="secondary" download>下载原图</a>
+    </footer>
+  </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="/vendor/marked.js" defer></script>
   <script src="/vendor/purify.js" defer></script>

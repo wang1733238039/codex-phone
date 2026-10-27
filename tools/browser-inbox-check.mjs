@@ -60,6 +60,40 @@ try {
   assert.match(await page.locator('#thread-list').innerText(), /新结果都已查看/);
   await page.reload(); await page.locator('.thread-row').first().waitFor();
   assert.equal(await page.locator('#unread-count').innerText(), '0', 'read results persist on refresh');
+  threads[0].activity.resultKey = 'replayed-projection';
+  snapshot(); await page.waitForTimeout(250);
+  assert.equal(await page.locator('#unread-count').innerText(), '0', 'a changed projection key cannot resurrect an already read result');
+  const repliedAt = Date.now() - 1000;
+  threads[0].activity = { state: 'unconfirmed', resultAt: repliedAt, resultKey: 'already-replied' };
+  messages.set(id, [
+    { role: 'assistant', phase: 'final_answer', text: '这是已经读完的上一条结果', time: new Date(repliedAt - 2000).toISOString() },
+    { role: 'user', text: '我已经回复了这个结果。\n'.repeat(150), time: new Date(repliedAt + 500).toISOString() },
+  ]);
+  snapshot(); await page.waitForFunction(() => document.getElementById('unread-count').textContent === '1');
+  await page.locator(`[data-thread-id="${id}"]`).click();
+  await page.waitForFunction(() => document.getElementById('unread-count').textContent === '0');
+  assert.equal(await page.evaluate(() => {
+    const box = document.getElementById('messages'), result = box.querySelector('.message.assistant').getBoundingClientRect();
+    return result.bottom < box.getBoundingClientRect().top;
+  }), true, 'reply acknowledgement works even when the previous final is above the viewport');
+  const unseenAt = Date.now();
+  threads[0].activity = { state: 'completed', resultAt: unseenAt, resultKey: 'unseen-result' };
+  messages.set(id, [
+    ...messages.get(id),
+    { role: 'assistant', phase: 'final_answer', text: '这是一条还没有滚动看完的新回复。\n\n'.repeat(120), time: new Date(unseenAt).toISOString() },
+  ]);
+  await page.evaluate(() => document.getElementById('messages').scrollTop = 0);
+  snapshot(); await page.waitForFunction(() => document.getElementById('unread-count').textContent === '1');
+  await page.evaluate(() => loadDetail(true));
+  assert.equal(await page.locator('#unread-count').innerText(), '1', 'an unread result below the viewport stays unread');
+  await page.locator('#message').fill('继续下一项工作'); await page.locator('#send-button').click();
+  await page.waitForFunction(() => document.getElementById('unread-count').textContent === '0');
+  await page.waitForFunction(() => state.sending.size === 0);
+  await page.locator('[data-action="back"]').click();
+  threads[0].activity = { state: 'completed', resultAt: Date.now() + 10, resultKey: 'next-genuine-result' };
+  snapshot(); await page.waitForFunction(() => document.getElementById('unread-count').textContent === '1');
+  threads[0].activity.resultAt = unseenAt; threads[0].activity.resultKey = 'unseen-result'; snapshot();
+  await page.waitForFunction(() => document.getElementById('unread-count').textContent === '0');
   threads[1].activity = { state: 'completed', resultKey: 'new-result', resultAt: Date.now() };
   messages.set(interrupted, [{ role: 'assistant', phase: 'final_answer', text: '新结果二', time: new Date().toISOString() }]);
   snapshot(); await page.waitForFunction(() => document.getElementById('unread-count').textContent === '1');
@@ -95,7 +129,8 @@ try {
   assert.deepEqual(errors, []);
   const report = { passed: true, verifiedAt: new Date().toISOString(), noRealModelCalls: true, checked: [
     'completed-and-interrupted-status', 'recent-24h-unread-baseline', 'unread-only-filter', 'viewed-final-marks-read',
-    'read-state-survives-refresh', 'new-result-toast', 'create-project-thread', 'empty-thread-first-message',
+    'read-state-survives-refresh', 'projection-replay-stays-read', 'later-user-clears-previous-result',
+    'unseen-long-result-stays-unread', 'reply-clears-only-existing-result', 'new-result-toast', 'create-project-thread', 'empty-thread-first-message',
     'late-create-receipt-no-duplicate', 'offline-disables-create', '375-390-1440-no-overflow'], pageErrors: errors };
   writeFileSync(join(artifacts, 'browser-report.json'), JSON.stringify(report, null, 2), 'utf8'); console.log(JSON.stringify(report));
 } catch (error) { await page.screenshot({ path: join(artifacts, 'failure.png') }); throw error; }

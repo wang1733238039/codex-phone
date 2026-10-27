@@ -5,6 +5,16 @@ const PhoneAttachments = (() => {
   const key = (thread = state.selected, device = state.deviceId) => scopeKey(thread, device);
   const path = item => `/api/devices/${item.deviceId}/threads/${item.threadId}/attachments${item.id ? `/${item.id}` : ''}`;
   const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  const previewable = file => /^(image\/(png|jpeg|webp|gif|avif|bmp))$/i.test(file.type) ||
+    (!file.type && /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(file.name));
+  function previewSource(item) {
+    return item.previewUrl || (item.kind === 'image' && item.id && ['ready', 'syncing'].includes(item.stage) ? path(item) + '/content' : '');
+  }
+  function releasePreview(item) {
+    if (!item.previewUrl) return;
+    if ($('attachment-preview-image').getAttribute('src') === item.previewUrl) $('attachment-preview-dialog').close();
+    URL.revokeObjectURL(item.previewUrl); item.previewUrl = '';
+  }
   function list(thread = state.selected, device = state.deviceId) {
     const scope = key(thread, device);
     if (!drafts.has(scope)) {
@@ -19,7 +29,7 @@ const PhoneAttachments = (() => {
     if (!items.length) return;
     const scope = key(items[0].threadId, items[0].deviceId);
     try { localStorage.setItem(`codex-phone-attachments:${scope}`, JSON.stringify(list(items[0].threadId, items[0].deviceId)
-      .filter(a => a.id).map(({ file, controller, busy, ...a }) => a))); } catch {}
+      .filter(a => a.id).map(({ file, controller, busy, previewUrl, ...a }) => a))); } catch {}
   }
   function changed(item) {
     persist([item]);
@@ -74,18 +84,24 @@ const PhoneAttachments = (() => {
     const items = list();
     for (const file of files) {
       const existing = items.find(a => !a.busy && a.error && a.name === file.name && a.size === file.size);
-      if (existing) { existing.file = file; upload(existing); continue; }
+      if (existing) {
+        existing.file = file;
+        if (previewable(file)) { releasePreview(existing); existing.previewUrl = URL.createObjectURL(file); }
+        upload(existing); continue;
+      }
       if (file.size < 1 || file.size > maximum) { notice(`${file.name}：单个文件最大 200 MB，且不能为空`); continue; }
       if (file.type.startsWith('image/') && ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) && file.size > 20 * 1024 * 1024) { notice('图片最大 20 MB，请先压缩'); continue; }
       if (items.length >= 10 || items.reduce((n, a) => n + a.size, 0) + file.size > maximum) { notice('每条最多 10 个附件，总计最大 200 MB'); break; }
       const item = { clientId: uuid(), threadId: state.selected, deviceId: state.deviceId, name: file.name, size: file.size,
-        kind: 'file', stage: 'uploading', offset: 0, remoteOffset: 0, file };
+        kind: previewable(file) ? 'image' : 'file', stage: 'uploading', offset: 0, remoteOffset: 0, file,
+        ...(previewable(file) ? { previewUrl: URL.createObjectURL(file) } : {}) };
       items.push(item); upload(item);
     }
     updateComposer();
   }
   function forget(item) {
     item.removed = true; item.controller?.abort();
+    releasePreview(item);
     const scope = key(item.threadId, item.deviceId), remaining = list(item.threadId, item.deviceId).filter(a => a !== item);
     drafts.set(scope, remaining);
     try { localStorage.removeItem(`codex-phone-attachments:${scope}`); } catch {}
@@ -101,7 +117,9 @@ const PhoneAttachments = (() => {
     try { await request(item, '', 'DELETE'); } catch (error) { if (error.status !== 409) notice(`材料已从草稿移除：${error.message}`); }
   }
   function accepted(thread, device, ids = []) {
-    const scope = key(thread, device), remaining = list(thread, device).filter(item => !ids.includes(item.id));
+    const scope = key(thread, device), items = list(thread, device);
+    for (const item of items) if (ids.includes(item.id)) releasePreview(item);
+    const remaining = items.filter(item => !ids.includes(item.id));
     drafts.set(scope, remaining); try { localStorage.removeItem(`codex-phone-attachments:${scope}`); } catch {}
     if (remaining.length) persist(remaining);
   }
@@ -125,7 +143,9 @@ const PhoneAttachments = (() => {
       info.append(el('strong', '', item.name), el('span', '', `${size(item.size)} · ${caption}`));
       const progress = el('progress'); progress.max = item.size * 2;
       progress.value = item.stage === 'ready' ? item.size * 2 : item.stage === 'syncing' ? item.size + (item.remoteOffset || 0) : item.offset;
-      progress.setAttribute('aria-label', `${item.name} 上传进度`); info.append(progress); row.append(icon(item.kind), info);
+      progress.setAttribute('aria-label', `${item.name} 上传进度`); info.append(progress);
+      const source = previewSource(item);
+      row.append(source ? previewButton(item.name, source, 'attachment-draft-preview', `${item.clientId}:preview`) : icon(item.kind), info);
       if (item.error) {
         const retry = el('button', 'text-button', '重试'); retry.type = 'button'; retry.dataset.attachmentFocus = `${item.clientId}:retry`;
         retry.onclick = () => { if (!item.file && item.offset < item.size) { notice('请选择同名原文件，继续上次上传'); $('attachment-input').click(); } else upload(item); };
@@ -146,22 +166,71 @@ const PhoneAttachments = (() => {
         'M3 5h18v14H3zM10 9l5 3-5 3z' : 'M5 3h9l5 5v13H5zM14 3v6h5M8 13h8m-8 4h6');
     svg.append(shape); return svg;
   }
+  function previewButton(name, source, className, focusId) {
+    const button = el('button', `attachment-preview-button ${className}`); button.type = 'button';
+    button.setAttribute('aria-label', `预览图片 ${name}`); button.setAttribute('aria-haspopup', 'dialog');
+    if (focusId) button.dataset.attachmentFocus = focusId;
+    const image = el('img', 'attachment-thumbnail'); image.src = source; image.alt = name;
+    image.width = 96; image.height = 96; image.loading = 'lazy';
+    image.onerror = () => {
+      button.replaceChildren(icon('image'), el('span', 'attachment-preview-fallback', '点此重试预览'));
+    };
+    button.append(image); button.onclick = () => showPreview(name, source);
+    return button;
+  }
+  function showPreview(name, source) {
+    const dialog = $('attachment-preview-dialog'), image = $('attachment-preview-image');
+    $('attachment-preview-name').textContent = name;
+    $('attachment-preview-status').textContent = '正在加载图片…'; $('attachment-preview-status').hidden = false;
+    $('attachment-preview-retry').hidden = true;
+    $('attachment-preview-viewport').classList.remove('is-zoomed');
+    $('attachment-preview-zoom').textContent = '放大查看'; $('attachment-preview-zoom').setAttribute('aria-pressed', 'false');
+    $('attachment-preview-zoom').disabled = true;
+    image.hidden = true; image.alt = name;
+    image.onload = () => { image.hidden = false; $('attachment-preview-status').hidden = true; $('attachment-preview-zoom').disabled = false; };
+    image.onerror = () => {
+      image.hidden = true; $('attachment-preview-status').hidden = false;
+      $('attachment-preview-status').textContent = '图片暂时无法加载，可以重试或下载原图';
+      $('attachment-preview-retry').hidden = false; $('attachment-preview-zoom').disabled = true;
+    };
+    image.src = source;
+    const download = $('attachment-preview-download'); download.href = source; download.download = name;
+    if (!dialog.open) dialog.showModal();
+    $('attachment-preview-viewport').scrollTo(0, 0);
+  }
   function cards(items, thread = state.selected, device = state.deviceId) {
     const box = el('div', 'message-attachments');
     for (const item of items || []) {
-      const link = el(item.available ? 'a' : 'div', 'attachment-card');
       const url = `/api/devices/${device}/threads/${thread}/attachments/${item.id}/content`;
-      if (item.available) { link.href = url + '?download=1'; link.setAttribute('download', item.name); }
-      if (item.kind === 'image' && item.available) {
-        const image = el('img', 'attachment-thumbnail'); image.src = url; image.alt = item.name; image.loading = 'lazy'; image.width = 64; image.height = 64; link.append(image);
-      } else link.append(icon(item.kind));
-      const info = el('span', 'attachment-info'); info.append(el('strong', '', item.name), el('span', '', item.available ? `${size(item.size)} · 下载材料` : '服务器缓存已过期，电脑原文件仍保留'));
+      const preview = item.kind === 'image' && item.available;
+      const link = el(item.available && !preview ? 'a' : 'div', `attachment-card${preview ? ' attachment-image-card' : ''}`);
+      if (item.available && !preview) { link.href = url + '?download=1'; link.setAttribute('download', item.name); }
+      link.append(preview ? previewButton(item.name, url, 'attachment-history-preview') : icon(item.kind));
+      const info = el('span', 'attachment-info'); info.append(el('strong', '', item.name), el('span', '', item.available ?
+        `${size(item.size)} · ${preview ? '点图查看大图' : '下载材料'}` : '服务器缓存已过期，电脑原文件仍保留'));
       link.append(info); box.append(link);
     }
     return box;
   }
-  function reset() { sessionEpoch++; for (const items of drafts.values()) for (const item of items) item.controller?.abort(); drafts.clear(); $('attachment-drafts').replaceChildren(); $('attachment-input').value = ''; }
+  function reset() {
+    sessionEpoch++; $('attachment-preview-dialog').close(); $('attachment-preview-image').removeAttribute('src');
+    for (const items of drafts.values()) for (const item of items) { item.controller?.abort(); releasePreview(item); }
+    drafts.clear(); $('attachment-drafts').replaceChildren(); $('attachment-input').value = '';
+  }
   document.addEventListener('DOMContentLoaded', () => {
+    const dialog = $('attachment-preview-dialog');
+    dialog.addEventListener('close', () => {
+      const image = $('attachment-preview-image'); image.onload = image.onerror = null; image.removeAttribute('src');
+      $('attachment-preview-download').removeAttribute('href');
+      markResultRead();
+    });
+    $('attachment-preview-zoom').onclick = () => {
+      const zoomed = $('attachment-preview-viewport').classList.toggle('is-zoomed');
+      $('attachment-preview-zoom').textContent = zoomed ? '适应屏幕' : '放大查看';
+      $('attachment-preview-zoom').setAttribute('aria-pressed', String(zoomed));
+      $('attachment-preview-viewport').scrollTo(0, 0);
+    };
+    $('attachment-preview-retry').onclick = () => showPreview($('attachment-preview-name').textContent, $('attachment-preview-download').getAttribute('href'));
     $('attach-button').onclick = () => $('attachment-input').click();
     $('attachment-input').onchange = event => { add(event.target.files); event.target.value = ''; };
     $('message').addEventListener('paste', event => { const files = [...event.clipboardData?.files || []]; if (files.length && !$('attach-button').disabled) { event.preventDefault(); add(files); } });
