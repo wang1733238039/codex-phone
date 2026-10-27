@@ -43,6 +43,34 @@ node tools/remote-agent.mjs
 
 Windows 可运行 `start-remote-agent.ps1`，并用 `install-remote-autostart.ps1` 配置当前用户登录自启。
 
+## Windows 桌面入口与开机自启
+
+配对后执行一次：
+
+```powershell
+node tools/install-connector.mjs
+```
+
+会在桌面和开始菜单创建 **Codex 随行 - 电脑连接** 快捷方式，同时开启当前用户登录自启：
+
+- 双击快捷方式，打开连接管理窗口并在需要时启动后台连接。重复打开不会启动第二个连接进程。
+- 勾选“登录 Windows 后自动启动连接”，以后重启并登录 Windows 后自动连接；取消勾选即可关闭自启，当前连接继续运行。
+- 关闭管理窗口不会停止后台连接；电脑关机、休眠后暂停，恢复联网时连接端会重试。
+- 窗口显示本机连接进程和后台守护状态。服务器的真实在线状态以手机电脑列表为准。
+- “打开手机网页”使用本机配对的网址；“查看日志”打开本机 `.data` 目录，分享日志时不要把同目录的凭据文件一起发出。
+
+程序仍在当前安装目录，快捷方式只是入口。不要删除或移动该目录；如需移动，保留本机私有配置并在新位置重新安装快捷方式和自启动。
+
+也可以单独安装入口、切换自启动：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File install-connector-shortcuts.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File install-remote-autostart.ps1 -NoStart
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File install-remote-autostart.ps1 -Disable
+```
+
+`-Disable` 只移除此安装目录拥有的登录自启项，不停止当前连接，也不修改其他安装目录的入口。自启在登录当前 Windows 用户后发生，电脑仍须保持开机、联网且 Codex 可用。
+
 ## 验证
 
 回到手机网页，电脑列表应显示新设备在线。打开一个项目和会话，先只发送一条无副作用的测试消息，确认回复和状态正常后再继续使用。

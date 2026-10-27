@@ -12,6 +12,10 @@ if (process.platform === 'win32') {
     { stdio: 'inherit', windowsHide: true, cwd: ROOT });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`Windows connector installation failed (${result.status ?? result.signal})`);
+  const shortcuts = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(ROOT, 'install-connector-shortcuts.ps1')],
+    { stdio: 'inherit', windowsHide: true, cwd: ROOT });
+  if (shortcuts.error) throw shortcuts.error;
+  if (shortcuts.status !== 0) throw new Error(`Windows shortcut installation failed (${shortcuts.status ?? shortcuts.signal})`);
 } else if (process.platform === 'darwin') {
   const escape = s => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
   const dir = join(homedir(), 'Library', 'LaunchAgents'); mkdirSync(dir, { recursive: true });

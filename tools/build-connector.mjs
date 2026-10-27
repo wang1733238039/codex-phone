@@ -6,7 +6,7 @@ import { ROOT } from '../src/config.mjs';
 const stage = resolve(ROOT, '.data', 'connector-package'), output = resolve(ROOT, 'public', 'downloads');
 mkdirSync(stage, { recursive: true }); mkdirSync(output, { recursive: true });
 const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
-const manifest = { name: 'codex-phone-connector', version: '0.5.0', private: true, type: 'module', license: 'AGPL-3.0-only', engines: { node: '>=24.0.0' },
+const manifest = { name: 'codex-phone-connector', version: '0.5.1', private: true, type: 'module', license: 'AGPL-3.0-only', engines: { node: '>=24.0.0' },
   scripts: { pair: 'node tools/pair.mjs', agent: 'node tools/remote-agent.mjs', 'install-connector': 'node tools/install-connector.mjs' },
   dependencies: { ws: lock.packages['node_modules/ws'].version } };
 writeFileSync(join(stage, 'package.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
@@ -17,6 +17,7 @@ const files = ['src/agent.mjs', 'src/config.mjs', 'src/codex.mjs', 'src/local-so
   'src/attachment-common.mjs', 'src/agent-attachments.mjs',
   'tools/pair.mjs', 'tools/remote-agent.mjs', 'tools/connector-status.mjs', 'tools/install-connector.mjs',
   'start-remote-agent.ps1', 'start-remote-watch.ps1', 'install-remote-autostart.ps1',
+  'connector-control.ps1', 'install-connector-shortcuts.ps1',
   'LICENSE', 'NOTICE', 'THIRD-PARTY-NOTICES.md'];
 for (const file of files) { const dest = join(stage, file); mkdirSync(dirname(dest), { recursive: true }); copyFileSync(join(ROOT, file), dest); }
 copyFileSync(join(ROOT, 'docs/CONNECT-ANOTHER-COMPUTER.md'), join(stage, 'README.md'));

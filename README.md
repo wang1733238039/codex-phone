@@ -82,7 +82,7 @@ npm.cmd run local
    npm run remote-agent
    ```
 
-   先登录网页生成一次性配对码。Windows 可用 `start-remote-agent.ps1` 启动，用 `install-remote-autostart.ps1` 配置当前用户登录自启。`src/agent.mjs` 和 `start-agent.ps1` 默认使用本地试用配置，不用于上述公网配对配置。
+   先登录网页生成一次性配对码。Windows 配对后执行 `node tools/install-connector.mjs`，会创建桌面和开始菜单的“Codex 随行 - 电脑连接”入口并配置当前用户登录自启。双击入口可启动连接、查看运行状态或勾选/取消自启；关闭窗口后后台连接继续运行。也可用 `start-remote-agent.ps1` 启动，用 `install-remote-autostart.ps1` 配置登录自启。`src/agent.mjs` 和 `start-agent.ps1` 默认使用本地试用配置，不用于上述公网配对配置。
 
 服务器已有 Nginx 或 Caddy 时，可复用反向代理；必须转发 WebSocket/SSE，后台服务只监听内网。Nginx 示例中的 `your-domain.example`、证书路径和日志路径都需要替换成你的实际域名。
 
