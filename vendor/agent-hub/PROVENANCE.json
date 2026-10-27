@@ -1,0 +1,23 @@
+{
+  "upstream": "https://github.com/easyaigc/agent-hub",
+  "fork": "https://github.com/wang1733238039/codex-mobile",
+  "revision": "6afdd4a5bb407a8ddcd4f56f80017ebdf098e578",
+  "sources": {
+    "scripts/web-adapter-entry.mjs": "8da6627c41614a7cb71c49a3a7a16f22516b10bd60596b6fda67b66c98772d88",
+    "packages/codex-adapter/src/desktop-ipc.ts": "c7345987e193f0deeb37c6dafe74573d295db8ac01ecd69695ffabf07060d877",
+    "packages/codex-adapter/src/desktop-framing.ts": "5cb8a4d9db2b49e7da70c74afbc511b7497ba84cfcf3daf5111a946235cfe0f2",
+    "packages/codex-adapter/src/desktop-live-window.ts": "c1defa804ef3616de06e0f502a8f7ad7f530d2b7926812900bf1ce969d5c5c95",
+    "packages/codex-adapter/src/desktop-platform.ts": "10aed455c334f30ed2c2b8413a72abf8df1093fdf67cd560df3dd0ebebcc4d94",
+    "packages/codex-adapter/src/windows-process.ts": "dbecceda8bcf9bbc45efa3eb1030d5d257f6386f5e7674caa9c1ceaaf815c345",
+    "packages/codex-adapter/windows/desktop-pipe.ps1": "e7bf3a0f1483407db8ec5a66c896b8a62cc88887aff7e32baf9061243e6af652",
+    "packages/codex-adapter/src/message-links.ts": "4bbcedac0a1d11e28cd71aa16b9053cbeba014581ba788ba3cbe7aabfd6b83c7",
+    "packages/codex-adapter/src/runtime.ts": "97f695f95efeee54af734a06e77d27ab48de913b924d68a5c1fce810d3e66114",
+    "packages/codex-adapter/src/desktop-sidebar.ts": "a59aa283030bbc286a7e3f0a3cda36fa782eb5e1d31cf1f7bb87747bd4dcec1f",
+    "packages/codex-adapter/src/desktop-history-identity.ts": "a16ea2f53d168d61b1591b895b7009c6747d8d34cb1fab3241fb3b179f058284",
+    "packages/codex-adapter/src/history-reader.ts": "49c5a961837d2f13ef420a40d69aaf2f67fcf2a5579e950f1d63dbe10c099517",
+    "packages/codex-adapter/src/generation-settings.ts": "1add11c852b7843bc911b7fc7dbc963d07c88bb42db21dda4e890f9f0b640217",
+    "packages/codex-adapter/src/desktop-private-state-native.ts": "22361d52e19891861254c0cbdcf9920f69e4ffc63032a26f21f84026e583fca6"
+  },
+  "outputSha256": "448bb288c238f160dd0d13a03fb19c57055b5362c334825269880616af8709fb",
+  "scope": "DesktopIpc only; no Host server, account, credentials, execution session, or arbitrary remote RPC"
+}

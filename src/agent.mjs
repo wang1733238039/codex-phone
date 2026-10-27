@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AgentAttachments } from './agent-attachments.mjs';
 import { buildInputs, attachmentText } from './attachment-common.mjs';
+import { DesktopBridge } from './desktop.mjs';
 
 export class Agent {
   constructor(config) {
@@ -16,6 +17,7 @@ export class Agent {
     this.attachments = new AgentAttachments(config);
     this.ws = null; this.stopped = false; this.active = new Map(); this.approvals = new Map(); this.inflight = new Set(); this.changedTimers = new Map(); this.reconnectCount = 0;
     this.queuedHere = new Map(); this.turnState = new Map(); this.modelCache = null; this.reading = 0;
+    this.desktop = new DesktopBridge(config, id => { this.changed(id); this.state(); });
     this.codex.on('message', msg => this.onCodex(msg));
     this.codex.on('disconnected', () => { this.active.clear(); this.approvals.clear(); this.state(); });
     const target = new URL(config.serverUrl);
@@ -24,11 +26,16 @@ export class Agent {
     target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:'; target.pathname = '/agent'; this.target = target;
   }
   send(message) { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message)); }
-  state() { this.send({ type: 'state', activeTurns: [...this.active.entries()].map(([threadId, turnId]) => ({ threadId, turnId })), approvals: [...this.approvals.values()].map(p => p.public) }); }
+  activeTurns() {
+    const turns = new Map(this.desktop.activeTurns().map(turn => [turn.threadId, turn]));
+    for (const [threadId, turnId] of this.active) turns.set(threadId, { threadId, turnId });
+    return [...turns.values()];
+  }
+  state() { this.send({ type: 'state', activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
   snapshot() {
     try { this.send({ type: 'snapshot', ...this.source.snapshot(), info: { computer: this.config.computerName || hostname(), controls: Boolean(this.config.controlsEnabled),
-      version: '0.5.0', capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true } },
-      activeTurns: [...this.active.entries()].map(([threadId, turnId]) => ({ threadId, turnId })), approvals: [...this.approvals.values()].map(p => p.public) }); }
+      version: '0.6.0', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true } },
+      activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
     catch (error) { console.error('Local index unavailable:', error.message); }
   }
   connect() {
@@ -96,7 +103,10 @@ export class Agent {
   async runtime(threadId, detail) {
     this.reading++; clearTimeout(this.idleTimer);
     const ownedTurn = this.active.get(threadId);
-    let runtime, queue = [], statusError;
+    let runtime, queue = [], statusError, desktopState;
+    if (!ownedTurn) {
+      try { desktopState = await this.desktop.read(threadId); } catch {}
+    }
     try {
       await this.codex.start();
       const read = await this.codex.call('thread/read', { threadId, includeTurns: false }, 10000);
@@ -119,7 +129,8 @@ export class Agent {
     return { queue, queueKnown: !statusError, execution: { state, owned: Boolean(active), turnId: active || null,
       lastActivityAt: Math.max(detail.lastActivityAt || 0, terminal?.lastActivityAt || 0), error: terminal?.error,
       verified: Boolean(active || ['idle', 'systemError'].includes(runtime?.status?.type)), statusError },
-      settings: { model: runtime?.model || '', effort: runtime?.reasoningEffort || '' } };
+      settings: { model: runtime?.model || '', effort: runtime?.reasoningEffort || '' },
+      ...(desktopState ? this.desktop.runtime(threadId, desktopState) : {}) };
   }
   async handle(action, data) {
     if (action === 'create-thread') return this.createThread(data);
@@ -139,6 +150,12 @@ export class Agent {
     if (!['send', 'stop', 'approve', 'queue-start', 'queue-delete'].includes(action)) throw new Error('Unsupported action');
     if (!this.config.controlsEnabled) throw new Error('电脑连接程序未开启操作权限');
     if (action === 'approve') {
+      if (typeof data.id === 'string' && data.id.startsWith('desktop:')) {
+        if (!validThreadId(data.threadId) || !['accept', 'decline', 'cancel'].includes(data.decision)) throw new Error('审批参数无效');
+        const row = this.source.row(data.threadId);
+        if (row.archived || !this.source.isLocal(row)) throw new Error('原桌面审批目标不可用');
+        return this.desktop.approve(data.id, data.threadId, data.decision);
+      }
       const p = this.approvals.get(data.id);
       if (!p || (data.threadId && p.public.threadId !== data.threadId) || !['accept', 'decline', 'cancel'].includes(data.decision)) throw new Error('此审批已结束或参数不正确');
       this.codex.respond(p.rpcId, { decision: data.decision }); this.approvals.delete(data.id); this.state(); return { ok: true };
@@ -154,7 +171,11 @@ export class Agent {
     }
     if (action === 'stop') {
       const turnId = this.active.get(data.threadId);
-      if (!turnId) throw new Error('只能停止由手机端启动的任务');
+      if (!turnId) {
+        const row = this.source.row(data.threadId);
+        if (row.archived || !this.source.isLocal(row)) throw new Error('原桌面目标不可用');
+        return this.desktop.stop(data.threadId, data.turnId);
+      }
       if (data.turnId && turnId !== data.turnId) throw new Error('此轮任务已结束，请刷新后重试');
       await this.codex.call('turn/interrupt', { threadId: data.threadId, turnId }); return { ok: true };
     }
@@ -166,8 +187,18 @@ export class Agent {
     this.inflight.add(data.threadId);
     try {
       const selection = await this.selection(data);
-      await this.codex.start();
       const active = this.active.get(data.threadId);
+      if (!active && action === 'send') {
+        const desktopState = await this.desktop.read(data.threadId, true);
+        if (desktopState) {
+          const result = await this.desktop.send(data.threadId, data, await this.inputs(data), selection, desktopState);
+          if (result) return result;
+          if (Object.keys(selection).length) throw new Error('原桌面任务进行中；排队请跟随会话模型，或等本轮结束后切换模型');
+          await this.codex.start();
+          return await this.queue(data.threadId, data);
+        }
+      }
+      await this.codex.start();
       if (active) {
         if (action === 'queue-start') throw new Error('当前任务仍在执行，排队消息将在本轮结束后继续');
         if (data.mode === 'steer') {
@@ -315,7 +346,7 @@ export class Agent {
   close() {
     this.stopped = true; clearTimeout(this.retry); clearTimeout(this.idleTimer); clearInterval(this.interval);
     for (const timer of this.changedTimers.values()) clearTimeout(timer);
-    this.ws?.close(); this.codex.close(); this.source.close();
+    this.ws?.close(); this.desktop.close(); this.codex.close(); this.source.close();
   }
 }
 

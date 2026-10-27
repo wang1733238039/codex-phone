@@ -1,0 +1,2 @@
+# Preserve vendor artifact and source bytes used by PROVENANCE.json.
+vendor/agent-hub/** -text

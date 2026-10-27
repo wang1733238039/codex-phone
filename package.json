@@ -1,6 +1,6 @@
 {
   "name": "codex-phone",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "description": "Self-hosted mobile web interface for viewing and continuing Codex sessions across computers.",
   "license": "AGPL-3.0-only",
@@ -9,7 +9,9 @@
     "url": "https://github.com/wang1733238039/codex-phone.git"
   },
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "setup": "node tools/setup.mjs",
     "start": "node src/server.mjs",
@@ -20,7 +22,7 @@
     "build-connector": "node tools/build-connector.mjs",
     "local": "node tools/local.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check src/server.mjs && node --check src/accounts.mjs && node --check src/store.mjs && node --check src/agent.mjs && node --check src/activity.mjs && node --check src/attachment-common.mjs && node --check src/agent-attachments.mjs && node --check src/server-attachments.mjs && node --check public/app.js && node --check public/accounts.js && node --check public/inbox.js && node --check public/attachments.js",
+    "check": "node --check src/server.mjs && node --check src/accounts.mjs && node --check src/store.mjs && node --check src/desktop.mjs && node --check src/agent.mjs && node --check src/activity.mjs && node --check src/attachment-common.mjs && node --check src/agent-attachments.mjs && node --check src/server-attachments.mjs && node --check public/app.js && node --check public/accounts.js && node --check public/inbox.js && node --check public/attachments.js",
     "test:browser:accounts": "node tools/browser-accounts-check.mjs"
   },
   "dependencies": {

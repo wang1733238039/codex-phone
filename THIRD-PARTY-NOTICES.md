@@ -1,5 +1,14 @@
 # Third-party notices
 
+## Agent Hub desktop IPC bridge - MIT
+
+Source: https://github.com/easyaigc/agent-hub, personal fork:
+https://github.com/wang1733238039/codex-mobile.
+The bundled bridge, source copies, original copyright and full MIT license are
+in `vendor/agent-hub/`. `PROVENANCE.json` records the exact fork revision and hashes.
+Only the desktop IPC adapter is bundled; the upstream Host service is not exposed
+by the web server.
+
 Dependency licenses below apply to their respective packages. This list is based on package-lock.json; versions and full notices are retained here.
 
 ## dompurify 3.4.17 - (MPL-2.0 OR Apache-2.0)
