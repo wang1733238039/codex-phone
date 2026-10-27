@@ -11,12 +11,12 @@ import { createApp } from '../src/server.mjs';
 import { hashPassword } from '../src/config.mjs';
 import { TRANSCRIPT_VERSION } from '../src/transcript.mjs';
 import { Store } from '../src/store.mjs';
+import { listenForFetch } from './helpers/http.mjs';
 
 async function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'phone-server-test-'));
   const app = createApp({ database: join(dir, 'cache.sqlite'), username: 'admin', passwordHash: hashPassword('test-pass'), agentToken: 'independent-test-token', controlsEnabled: true, ...options });
-  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
-  const origin = `http://127.0.0.1:${app.server.address().port}`;
+  const origin = await listenForFetch(app.server);
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); });
   let cookie, csrf;
   const request = (path, body, extra = {}) => fetch(origin + path, { headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body === undefined ? {} : { Origin: origin, 'Content-Type': 'application/json', 'X-CSRF-Token': csrf || '' }), ...extra }, ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }) });

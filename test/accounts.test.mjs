@@ -11,6 +11,7 @@ import { createApp } from '../src/server.mjs';
 import { hashPassword } from '../src/config.mjs';
 import { Store, credentialHash } from '../src/store.mjs';
 import { TRANSCRIPT_VERSION } from '../src/transcript.mjs';
+import { listenForFetch } from './helpers/http.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const until = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) return; await sleep(10); } throw new Error('Timed out'); };
@@ -20,8 +21,7 @@ async function fixture(t, extra = {}) {
   const config = { database: join(dir, 'cache.sqlite'), username: 'admin', passwordHash: hashPassword(PASSWORD),
     agentToken: 'test-admin-device', controlsEnabled: true, ...extra };
   const app = createApp(config);
-  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
-  const origin = `http://127.0.0.1:${app.server.address().port}`;
+  const origin = await listenForFetch(app.server);
   t.after(async () => { await app.close(); rmSync(dir, { force: true, recursive: true }); });
   function client() {
     const c = { cookie: '', csrf: '', account: null };
@@ -393,8 +393,7 @@ test('0.5 database migration preserves admin identity, old cookie, devices and h
   const backupPath = app.accounts.backupPath, backup = new DatabaseSync(backupPath, { readOnly: true });
   assert.equal(backup.prepare("SELECT name FROM sqlite_master WHERE name='accounts'").get(), undefined);
   assert.equal(backup.prepare('SELECT csrf FROM sessions').get().csrf, 'stable-csrf'); backup.close();
-  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
-  const origin = `http://127.0.0.1:${app.server.address().port}`;
+  const origin = await listenForFetch(app.server);
   try {
     const session = await (await fetch(origin + '/api/session', { headers: { Cookie: `codex_phone=${cookie}` } })).json();
     assert.equal(session.username, 'old-admin'); assert.equal(session.account.role, 'admin');

@@ -85,7 +85,8 @@ export class DesktopBridge {
         'item/fileChange/requestApproval': 'thread-follower-file-approval-decision' }[request.method];
       if (!method || !['string', 'number'].includes(typeof request.id)) continue;
       const id = `desktop:${threadId}:${request.id}`;
-      this.approvals.set(id, { threadId, requestId: request.id, method, fingerprint: JSON.stringify(params),
+      this.approvals.set(id, { threadId, requestId: request.id, method, requestMethod: request.method,
+        turnId: active.turnId, fingerprint: JSON.stringify(params),
         public: { id, threadId, type: request.method.includes('commandExecution') ? 'command' : 'file',
           reason: params.reason || '原桌面操作需要确认', command: params.command || '', cwd: params.cwd || '' } });
     }
@@ -146,7 +147,9 @@ export class DesktopBridge {
     await this.read(threadId, true);
     const validate = () => {
       const request = (this.ipc.state(threadId)?.requests || []).find(p => p.id === original.requestId && p.completed !== true);
-      if (!request || JSON.stringify(request.params) !== original.fingerprint) throw new Error('原桌面审批已经变化');
+      if (!request || request.method !== original.requestMethod ||
+        runningTurn(this.ipc.state(threadId))?.turnId !== original.turnId ||
+        JSON.stringify(request.params) !== original.fingerprint) throw new Error('原桌面审批已经变化');
     };
     validate();
     let written = false;

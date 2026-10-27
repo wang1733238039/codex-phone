@@ -103,3 +103,19 @@ test('an active runtime without a complete turn snapshot cannot start a parallel
   assert.equal(await f.bridge.send(id, {}, [], {}, f.state), null);
   assert.equal(f.calls.length, 0);
 });
+test('desktop approvals recheck request type and active turn just before write', async () => {
+  for (const change of ['method', 'turn']) {
+    const f = fixture();
+    f.state.requests = [{ id: 9, method: 'item/commandExecution/requestApproval',
+      params: { threadId: id, turnId: 'original-turn', command: 'original' } }];
+    f.bridge.collectApprovals(id);
+    f.ipc.command = async (_id, _method, _params, before) => {
+      if (change === 'method') f.state.requests[0].method = 'item/fileChange/requestApproval';
+      else f.state.turns[0].status = 'completed';
+      before();
+      assert.fail('stale approval must not be written');
+    };
+    await assert.rejects(f.bridge.approve([...f.bridge.approvals.keys()][0], id, 'accept'),
+      error => error.uncertain === false && /变化/.test(error.message));
+  }
+});

@@ -11,13 +11,13 @@ import { createApp } from '../src/server.mjs';
 import { Store, credentialHash } from '../src/store.mjs';
 import { hashPassword } from '../src/config.mjs';
 import { TRANSCRIPT_VERSION } from '../src/transcript.mjs';
+import { listenForFetch } from './helpers/http.mjs';
 
 const until = async fn => { for (let i = 0; i < 200; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('Test condition timed out'); };
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'phone-devices-'));
   const app = createApp({ database: join(dir, 'cache.sqlite'), agentToken: 'primary-secret', username: 'admin', passwordHash: hashPassword('test-pass'), controlsEnabled: true });
-  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
-  const origin = `http://127.0.0.1:${app.server.address().port}`;
+  const origin = await listenForFetch(app.server);
   t.after(async () => { await app.close(); rmSync(dir, { force: true, recursive: true }); });
   const login = await fetch(origin + '/api/login', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'test-pass' }) });
   const cookie = login.headers.get('set-cookie').split(';')[0], { csrf } = await login.json();

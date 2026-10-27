@@ -16,4 +16,4 @@
 
 `vendor/agent-hub/PROVENANCE.json` 记录个人分支 revision、源码及产物 SHA-256。重建从 `codex-mobile` 执行 `node scripts/build-web-adapter.mjs ../codex-phone/vendor/agent-hub`。MIT 许可、源码副本与 Windows 验证脚本随连接包分发。
 
-本次 71 项自动测试通过，并在当前 Windows 电脑只读连接真实 Codex，确认原会话 owner 和实时状态；没有向当前聊天发送测试输入。手机发送、追加、停止、审批的完整真实链路及 macOS 尚未验收，不能用单元测试代替。
+本次 72 项自动测试通过，并在当前 Windows 电脑只读连接真实 Codex，确认原会话 owner 和实时状态；没有向当前聊天发送测试输入。本机与公网网页的登录、电脑在线、项目分组、原桌面详情和连接包下载已核对。手机发送、追加、停止、审批的完整真实链路及 macOS 尚未验收，不能用单元测试代替。

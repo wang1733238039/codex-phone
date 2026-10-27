@@ -11,6 +11,7 @@ import { buildInputs, attachmentText, detectType, CHUNK_BYTES } from '../src/att
 import { createApp } from '../src/server.mjs';
 import { hashPassword } from '../src/config.mjs';
 import { Transcript, TRANSCRIPT_VERSION } from '../src/transcript.mjs';
+import { listenForFetch } from './helpers/http.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const pause = ms => new Promise(r => setTimeout(r, ms));
@@ -19,8 +20,7 @@ async function fixture(t, config = {}) {
   const app = createApp({ database: join(dir, 'cache.sqlite'), username: 'admin', passwordHash: hashPassword('test-pass'),
     agentToken: token, controlsEnabled: true, ...config });
   const receiver = new AgentAttachments({ configPath: join(dir, 'agent', 'config.json'), agentToken: token });
-  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
-  const origin = `http://127.0.0.1:${app.server.address().port}`;
+  const origin = await listenForFetch(app.server);
   let cookie, csrf, sent = [], lastInput = [];
   const request = async (route, method = 'GET', data, headers = {}) => fetch(origin + route, {
     method, headers: { Cookie: cookie || '', Origin: origin, 'X-CSRF-Token': csrf || '', ...headers },
