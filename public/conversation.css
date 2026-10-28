@@ -127,11 +127,14 @@
   .delivery-status{max-height:30px;margin-bottom:4px}
   .execution-status{max-height:26px}
 }
+.list-toolbar{display:flex;flex-direction:column;flex:0 0 auto;min-width:0}
 @media(max-width:760px){
   .brand-row,.connection-strip,#account-banner{display:none}
-  .device-switch{margin:8px 14px 0;width:calc(100% - 28px);min-height:44px;padding:6px 10px}
-  .list-heading{padding:4px 14px 6px;gap:8px}
-  .list-heading h1{font-size:22px}
+  .list-toolbar{flex-direction:row;align-items:center;gap:8px;padding:8px 14px 6px;padding-top:max(8px,env(safe-area-inset-top))}
+  .list-toolbar .device-switch{flex:0 1 auto;margin:0;width:auto;max-width:40%;min-width:44px;min-height:44px;padding:6px 8px;gap:6px}
+  .list-heading{flex:1 0 auto;min-width:0;padding:0;gap:4px}
+  .list-heading h1{font-size:22px;white-space:nowrap}
+  .list-heading .count{padding:1px 6px;white-space:nowrap}
   .list-heading .icon-button{width:44px;height:44px}
   .search-box{min-height:44px;margin:0 14px 6px;padding:0 10px}
   .search-box input{height:44px}

@@ -28,7 +28,7 @@ const messages = new Map([[id, [{ role: 'assistant', phase: 'final_answer', text
 const ws = new WebSocket(origin.replace('http', 'ws') + '/agent', { headers: { Authorization: 'Bearer test' } }); await once(ws, 'open');
 let creates = 0, hold = false, held;
 const snapshot = () => ws.send(JSON.stringify({ type: 'snapshot', threads, sidebar: { projects: [{ id: 'project', nativeId: 'native-project', name: '测试项目', expanded: true, rootPaths: [dir] }] },
-  info: { controls: true, version: '0.5.0', capabilities: { models: true, createThread: true, activity: true } } }));
+  info: { computer: '4090', controls: true, version: '0.5.0', capabilities: { models: true, createThread: true, activity: true } } }));
 ws.on('message', raw => {
   const m = JSON.parse(raw); if (m.type !== 'request') return;
   const reply = data => ws.send(JSON.stringify({ type: 'response', id: m.id, data }));
@@ -61,13 +61,51 @@ try {
       }).length,
       brandHidden: getComputedStyle(document.querySelector('.brand-row')).display === 'none',
       connectionHidden: getComputedStyle(document.querySelector('.connection-strip')).display === 'none',
-      accountHidden: getComputedStyle(document.getElementById('account-banner')).display === 'none'
+      accountHidden: getComputedStyle(document.getElementById('account-banner')).display === 'none',
+      toolbarHeight: document.querySelector('.list-toolbar').getBoundingClientRect().height
     };
   });
   assert.ok(mobileList.listHeight >= mobileList.viewportHeight * 0.55, `session list should own most of the phone screen: ${JSON.stringify(mobileList)}`);
   assert.ok(mobileList.visibleRows >= 4, `several sessions should be visible without scrolling: ${JSON.stringify(mobileList)}`);
   assert.equal(mobileList.brandHidden && mobileList.connectionHidden && mobileList.accountHidden, true,
     'secondary brand, connection and account bars collapse on the mobile session list');
+  assert.ok(mobileList.toolbarHeight <= 58, 'device switch and list heading use a single 44px touch row');
+  const compactHeader = [];
+  for (const width of [320, 360, 375, 390, 760]) {
+    await page.setViewportSize({ width, height: 844 });
+    const original = await page.evaluate(() => ({
+      name: document.getElementById('device-label').textContent,
+      title: document.getElementById('list-title').textContent,
+      count: document.getElementById('thread-count').textContent
+    }));
+    // Long names and archived titles must still leave both action buttons reachable.
+    for (const crowded of [false, true]) {
+      await page.evaluate(({ crowded, original }) => {
+        document.getElementById('device-label').textContent = crowded ? '办公室的主力开发电脑 4090' : '4090';
+        document.getElementById('list-title').textContent = crowded ? '已归档' : original.title;
+        document.getElementById('thread-count').textContent = crowded ? '9999' : original.count;
+      }, { crowded, original });
+      const boxes = await page.evaluate(() => ['#device-button', '#list-title', '#thread-count',
+        '#new-thread-button', '.list-heading [data-action="refresh"]'].map(selector => {
+        const rect = document.querySelector(selector).getBoundingClientRect();
+        return { selector, left: rect.left, right: rect.right, middle: rect.y + rect.height / 2, height: rect.height };
+      }));
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      for (const [index, box] of boxes.entries()) {
+        assert.ok(box.left >= 0 && box.right <= width, `header control fits: ${JSON.stringify({ width, crowded, box })}`);
+        assert.ok(Math.abs(box.middle - boxes[0].middle) <= 1, 'device, title and actions share the same horizontal axis');
+        if (index) assert.ok(box.left >= boxes[index - 1].right, 'header controls do not overlap');
+      }
+      for (const index of [0, 3, 4]) assert.ok(boxes[index].height >= 44, 'touch targets stay at least 44px tall');
+      compactHeader.push({ width, crowded, passed: true });
+    }
+    await page.evaluate(original => {
+      document.getElementById('device-label').textContent = original.name;
+      document.getElementById('list-title').textContent = original.title;
+      document.getElementById('thread-count').textContent = original.count;
+    }, original);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: join(artifacts, 'phone-list-primary.png') });
   await page.locator('.mobile-nav [data-action="status"]').click();
   assert.equal(await page.locator('#status-dialog').isVisible(), true);
@@ -154,11 +192,12 @@ try {
   ws.close(); await once(ws, 'close');
   await page.waitForFunction(() => document.getElementById('new-thread-button').disabled);
   assert.deepEqual(errors, []);
-  const report = { passed: true, verifiedAt: new Date().toISOString(), noRealModelCalls: true, mobileList, checked: [
+  const report = { passed: true, verifiedAt: new Date().toISOString(), noRealModelCalls: true, mobileList, compactHeader, checked: [
     'completed-and-interrupted-status', 'recent-24h-unread-baseline', 'unread-only-filter', 'viewed-final-marks-read',
     'read-state-survives-refresh', 'projection-replay-stays-read', 'later-user-clears-previous-result',
     'unseen-long-result-stays-unread', 'reply-clears-only-existing-result', 'new-result-toast', 'create-project-thread', 'empty-thread-first-message',
-    'late-create-receipt-no-duplicate', 'offline-disables-create', 'mobile-session-list-primary-layout', '375-390-1440-no-overflow'], pageErrors: errors };
+    'late-create-receipt-no-duplicate', 'offline-disables-create', 'mobile-session-list-primary-layout',
+    'single-row-device-and-title', '320-to-760-long-device-and-archived-title', '375-390-1440-no-overflow'], pageErrors: errors };
   writeFileSync(join(artifacts, 'browser-report.json'), JSON.stringify(report, null, 2), 'utf8'); console.log(JSON.stringify(report));
 } catch (error) { await page.screenshot({ path: join(artifacts, 'failure.png') }); throw error; }
 finally { await browser.close(); ws.terminate(); await app.close(); rmSync(dir, { recursive: true, force: true }); }

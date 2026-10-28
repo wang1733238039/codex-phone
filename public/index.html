@@ -58,12 +58,14 @@
         <div><strong class="brand-name">Codex 随行</strong><span class="brand-subtitle">你的工作，随时接上</span></div>
         <button class="icon-button desktop-status" data-action="status" aria-label="连接信息"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></svg></button>
       </header>
-      <button id="device-button" class="device-switch" type="button" data-action="devices" aria-label="切换或管理电脑" aria-haspopup="dialog">
-        <svg aria-hidden="true"><use href="/device-icons.svg#monitor"/></svg><span id="device-label">选择电脑</span><svg aria-hidden="true"><use href="/device-icons.svg#chevron-down"/></svg>
-      </button>
-      <div class="connection-strip"><span id="connection-dot" class="status-dot"></span><span id="connection-label">正在连接电脑</span><span id="connection-time"></span></div>
-      <button id="account-banner" class="account-banner" data-action="account" type="button"><span id="account-banner-label">账户与套餐</span><span aria-hidden="true">→</span></button>
-      <div class="list-heading"><h1 id="list-title">会话</h1><span id="thread-count" class="count">—</span><button id="new-thread-button" class="icon-button refresh-button" type="button" aria-label="新建对话" aria-haspopup="dialog" title="新建对话"><svg aria-hidden="true"><use href="/device-icons.svg#plus"/></svg></button><button class="icon-button" data-action="refresh" aria-label="刷新会话"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 11.5-2L20 8M4 16l2.5 3A7 7 0 0 0 18 17"/></svg></button></div>
+      <div class="list-toolbar">
+        <button id="device-button" class="device-switch" type="button" data-action="devices" aria-label="切换或管理电脑" aria-haspopup="dialog">
+          <svg aria-hidden="true"><use href="/device-icons.svg#monitor"/></svg><span id="device-label">选择电脑</span><svg aria-hidden="true"><use href="/device-icons.svg#chevron-down"/></svg>
+        </button>
+        <div class="connection-strip"><span id="connection-dot" class="status-dot"></span><span id="connection-label">正在连接电脑</span><span id="connection-time"></span></div>
+        <button id="account-banner" class="account-banner" data-action="account" type="button"><span id="account-banner-label">账户与套餐</span><span aria-hidden="true">→</span></button>
+        <div class="list-heading"><h1 id="list-title">会话</h1><span id="thread-count" class="count">—</span><button id="new-thread-button" class="icon-button refresh-button" type="button" aria-label="新建对话" aria-haspopup="dialog" title="新建对话"><svg aria-hidden="true"><use href="/device-icons.svg#plus"/></svg></button><button class="icon-button" data-action="refresh" aria-label="刷新会话"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 11.5-2L20 8M4 16l2.5 3A7 7 0 0 0 18 17"/></svg></button></div>
+      </div>
       <label class="search-box" for="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" autocomplete="off" placeholder="搜索会话、内容摘要或项目" aria-label="搜索会话"></label>
       <nav class="desktop-tabs" aria-label="会话分类"><button class="tab active" data-view="recent" aria-current="page">最近会话</button><button class="tab" data-view="archived">已归档</button></nav>
       <div id="list-error" class="inline-notice" role="alert" hidden></div>

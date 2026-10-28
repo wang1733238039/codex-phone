@@ -1,6 +1,6 @@
 {
   "name": "codex-phone",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "private": true,
   "description": "Self-hosted mobile web interface for viewing and continuing Codex sessions across computers.",
   "license": "AGPL-3.0-only",
