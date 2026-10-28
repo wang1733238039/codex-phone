@@ -53,42 +53,69 @@ try {
   await page.goto(origin); await page.locator('#password').fill('test-pass'); await page.locator('#login-button').click();
   await page.locator('.thread-row').first().waitFor(); await thread(threadId);
   assert.equal(await page.locator('#attach-button').isEnabled(), true);
-  const png = await page.screenshot();
   holdSync = true;
-  await page.locator('#attachment-input').setInputFiles([file('手机照片.png', png), file('中文说明.txt')]);
-  const draftPreview = page.locator('.attachment-draft-preview');
+  const images = (await page.evaluate(() => Array.from({ length: 8 }, (_, index) => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 96;
+    const context = canvas.getContext('2d');
+    context.fillStyle = ['#2454dc', '#16876a', '#bb4154', '#7750b8', '#d07a20', '#25879e', '#648d32', '#a34879'][index];
+    context.fillRect(0, 0, 96, 96);
+    context.fillStyle = '#fbfcff'; context.font = '600 34px sans-serif'; context.textAlign = 'center';
+    context.fillText(String(index + 1), 48, 60);
+    return canvas.toDataURL('image/png');
+  }))).map((uri, index) => file(`手机照片-${index + 1}.png`, Buffer.from(uri.split(',')[1], 'base64')));
+  await page.locator('#attachment-input').setInputFiles([...images, file('中文说明.txt')]);
+  const draftPreview = page.locator('.attachment-draft-preview').first();
   await draftPreview.waitFor();
   await page.waitForFunction(() => document.querySelector('.attachment-draft-preview img')?.naturalWidth > 0);
+  await page.waitForFunction(() => document.querySelectorAll('.attachment-image-tile').length === 8);
+  assert.equal(await page.locator('.attachment-image-tile').count(), 8);
+  assert.equal(await page.locator('.attachment-image-strip .attachment-info').count(), 0, 'image filenames and detail rows are omitted from the compact strip');
+  assert.doesNotMatch(await page.locator('.attachment-image-strip').innerText(), /手机照片/);
+  assert.equal(await page.locator('.attachment-image-strip').evaluate(node => node.scrollWidth > node.clientWidth), true, 'multiple images fit a single horizontally scrollable row');
+  assert.equal(await page.locator('.attachment-image-strip').evaluate(node =>
+    [...node.children].filter(tile => {
+      const rect = tile.getBoundingClientRect(), strip = node.getBoundingClientRect();
+      return rect.left >= strip.left && rect.right <= strip.right;
+    }).length), 6, 'six image previews fit on a 390px phone viewport');
+  assert.equal(await page.locator('.attachment-image-strip').evaluate(node => {
+    node.scrollLeft = node.scrollWidth;
+    const last = node.lastElementChild.getBoundingClientRect(), strip = node.getBoundingClientRect();
+    return last.right <= strip.right && last.left >= strip.left;
+  }), true, 'the final image remains fully visible after scrolling the strip');
+  await page.locator('.attachment-image-strip').evaluate(node => { node.scrollLeft = 0; });
   await draftPreview.click(); await page.locator('#attachment-preview-dialog').waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.getElementById('attachment-preview-image').naturalWidth > 0);
-  assert.equal(await page.locator('#attachment-preview-image').getAttribute('alt'), '手机照片.png');
-  assert.equal(await page.locator('#attachment-preview-image').evaluate(image => image.naturalWidth), 390);
+  assert.equal(await page.locator('#attachment-preview-image').getAttribute('alt'), '手机照片-1.png');
+  assert.equal(await page.locator('#attachment-preview-image').evaluate(image => image.naturalWidth), 96);
   assert.ok((await page.locator('#attachment-preview-image').getAttribute('src')).startsWith('blob:'), 'local preview works before upload completes');
   await page.locator('#attachment-preview-zoom').click();
   assert.equal(await page.locator('#attachment-preview-zoom').getAttribute('aria-pressed'), 'true');
   await page.locator('[aria-label="关闭图片预览"]').click();
-  holdSync = false; syncHeld.splice(0).forEach(r => r()); await ready(2);
+  holdSync = false; syncHeld.splice(0).forEach(r => r()); await ready(9);
+  await page.screenshot({ path: join(artifacts, 'phone-attachments-ready.png'), fullPage: true });
+  await page.locator('.attachment-draft-preview').first().click();
+  await page.locator('#attachment-preview-remove').click();
+  await page.waitForFunction(() => PhoneAttachments.current().length === 8);
   assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('codex-phone-attachments:') &&
     localStorage.getItem(key).includes('blob:'))), false, 'blob URLs and file contents never enter persistent drafts');
   assert.equal(await page.locator('#send-button').isEnabled(), true, 'attachment-only submission is enabled');
-  await page.screenshot({ path: join(artifacts, 'phone-attachments-ready.png'), fullPage: true });
   await thread(otherThreadId); assert.equal(await page.locator('#attachment-drafts').isHidden(), true);
-  await thread(threadId); assert.equal(await page.locator('.attachment-draft').count(), 2);
-  await page.reload(); await ready(2); assert.equal(await page.locator('#send-button').isEnabled(), true);
+  await thread(threadId); assert.equal(await page.locator('.attachment-image-tile').count(), 7);
+  await page.reload(); await ready(8); assert.equal(await page.locator('#send-button').isEnabled(), true);
   await page.waitForFunction(() => document.querySelector('.attachment-draft-preview img')?.naturalWidth > 0);
-  await page.locator('.attachment-draft-preview').click();
+  await page.locator('.attachment-draft-preview').first().click();
   await page.waitForFunction(() => !document.getElementById('attachment-preview-image').hidden);
   assert.ok((await page.locator('#attachment-preview-image').getAttribute('src')).includes('/content'), 'restored draft uses private server image');
   await page.keyboard.press('Escape');
   await page.locator('#send-button').click(); await page.waitForFunction(() => !PhoneAttachments.current().length && !state.sending.size);
-  assert.equal(sent.length, 1); assert.equal(sent[0].text, ''); assert.equal(sent[0].attachments.length, 2);
+  assert.equal(sent.length, 1); assert.equal(sent[0].text, ''); assert.equal(sent[0].attachments.length, 8);
   await page.locator('.message-attachments .attachment-card').first().waitFor();
-  assert.equal(await page.locator('.message.user .attachment-card').count(), 2);
-  await page.locator('.attachment-history-preview').click();
+  assert.equal(await page.locator('.message.user .attachment-card').count(), 8);
+  await page.locator('.attachment-history-preview').first().click();
   await page.waitForFunction(() => !document.getElementById('attachment-preview-image').hidden);
   await page.screenshot({ path: join(artifacts, 'phone-image-preview.png') });
   await page.keyboard.press('Escape');
-  assert.equal(await page.locator('.attachment-history-preview').evaluate(node => document.activeElement === node), true, 'closing preview restores keyboard focus');
+  assert.equal(await page.locator('.attachment-history-preview').first().evaluate(node => document.activeElement === node), true, 'closing preview restores keyboard focus');
   assert.equal(await page.locator('.message-body').filter({ hasText: 'codex-phone-attachments' }).count(), 0);
   holdSync = true;
   await page.locator('#attachment-input').setInputFiles(file('弱网恢复.txt', Buffer.alloc(600000, 65)));
@@ -119,6 +146,7 @@ try {
   assert.deepEqual(errors, []);
   const report = { passed: true, realReceiver: true, attachmentOnly: true, unicode: true, image: true, file: true, resumeAfterReload: true,
     localPreviewBeforeUpload: true, restoredDraftPreview: true, historyLightbox: true, zoom: true, previewFocusRestored: true, noPersistedBlobUrls: true,
+    multiImageCompactStrip: true, imageFilenameHidden: true, stripTouchScroll: true, removeFromPreview: true,
     threadIsolation: true, typingDuringUpload: true, uncertaintyProtection: true, preserveNewAttachmentsDuringSend: true,
     viewportWidths: [375, 390, 1440], consoleErrors: errors };
   writeFileSync(join(artifacts, 'browser-report.json'), JSON.stringify(report, null, 2), 'utf8'); console.log(JSON.stringify(report));

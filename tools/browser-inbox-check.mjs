@@ -20,7 +20,10 @@ const threads = [
   { id, title: '刚完成的工作', activity: { state: 'completed', resultAt: now - 60000, resultKey: 'one' } },
   { id: interrupted, title: '中断的工作', activity: { state: 'interrupted' } },
   { id: old, title: '前天已完成', activity: { state: 'completed', resultAt: now - 2 * 86400000, resultKey: 'old' } }
-].map(t => ({ ...t, local: true, archived: false, projectId: 'project', projectName: '测试项目' }));
+].concat(Array.from({ length: 12 }, (_, index) => ({
+  id: randomUUID(), title: `开发任务 ${String(index + 1).padStart(2, '0')}`,
+  preview: '查看最近进展与下一步待办', activity: { state: 'idle' }
+}))).map(t => ({ ...t, local: true, archived: false, projectId: 'project', projectName: '测试项目' }));
 const messages = new Map([[id, [{ role: 'assistant', phase: 'final_answer', text: '已经得到最终结果', time: new Date(now - 60000).toISOString() }]]]);
 const ws = new WebSocket(origin.replace('http', 'ws') + '/agent', { headers: { Authorization: 'Bearer test' } }); await once(ws, 'open');
 let creates = 0, hold = false, held;
@@ -48,6 +51,29 @@ page.on('pageerror', error => errors.push(error.message));
 try {
   await page.goto(origin); await page.locator('#password').fill('test-pass'); await page.locator('#login-button').click();
   await page.locator('.thread-row').first().waitFor();
+  const mobileList = await page.evaluate(() => {
+    const list = document.getElementById('thread-list'), rect = list.getBoundingClientRect();
+    return {
+      viewportHeight: innerHeight, listHeight: rect.height,
+      visibleRows: [...list.querySelectorAll('.thread-row')].filter(row => {
+        const rowRect = row.getBoundingClientRect();
+        return rowRect.top >= rect.top && rowRect.bottom <= rect.bottom;
+      }).length,
+      brandHidden: getComputedStyle(document.querySelector('.brand-row')).display === 'none',
+      connectionHidden: getComputedStyle(document.querySelector('.connection-strip')).display === 'none',
+      accountHidden: getComputedStyle(document.getElementById('account-banner')).display === 'none'
+    };
+  });
+  assert.ok(mobileList.listHeight >= mobileList.viewportHeight * 0.55, `session list should own most of the phone screen: ${JSON.stringify(mobileList)}`);
+  assert.ok(mobileList.visibleRows >= 4, `several sessions should be visible without scrolling: ${JSON.stringify(mobileList)}`);
+  assert.equal(mobileList.brandHidden && mobileList.connectionHidden && mobileList.accountHidden, true,
+    'secondary brand, connection and account bars collapse on the mobile session list');
+  await page.screenshot({ path: join(artifacts, 'phone-list-primary.png') });
+  await page.locator('.mobile-nav [data-action="status"]').click();
+  assert.equal(await page.locator('#status-dialog').isVisible(), true);
+  assert.equal(await page.locator('#status-dialog [data-action="account"]').isVisible(), true,
+    'account settings remain available from the connection panel');
+  await page.keyboard.press('Escape');
   assert.equal(await page.locator('#unread-count').innerText(), '1');
   assert.match(await page.locator(`[data-thread-id="${interrupted}"]`).innerText(), /已中断/);
   assert.match(await page.locator(`[data-thread-id="${id}"]`).innerText(), /有新结果.*已完成/s);
@@ -119,6 +145,7 @@ try {
     await page.setViewportSize({ width, height });
     if (await page.locator('[data-action="back"]').isVisible()) await page.locator('[data-action="back"]').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    if (width < 760) assert.ok(await page.locator('#thread-list').evaluate(node => node.getBoundingClientRect().height >= innerHeight * .55));
     await page.screenshot({ path: join(artifacts, `inbox-${width}.png`) });
     await page.locator('#new-thread-button').click();
     assert.equal(await page.evaluate(() => document.getElementById('new-thread-dialog').scrollWidth > document.getElementById('new-thread-dialog').clientWidth), false);
@@ -127,11 +154,11 @@ try {
   ws.close(); await once(ws, 'close');
   await page.waitForFunction(() => document.getElementById('new-thread-button').disabled);
   assert.deepEqual(errors, []);
-  const report = { passed: true, verifiedAt: new Date().toISOString(), noRealModelCalls: true, checked: [
+  const report = { passed: true, verifiedAt: new Date().toISOString(), noRealModelCalls: true, mobileList, checked: [
     'completed-and-interrupted-status', 'recent-24h-unread-baseline', 'unread-only-filter', 'viewed-final-marks-read',
     'read-state-survives-refresh', 'projection-replay-stays-read', 'later-user-clears-previous-result',
     'unseen-long-result-stays-unread', 'reply-clears-only-existing-result', 'new-result-toast', 'create-project-thread', 'empty-thread-first-message',
-    'late-create-receipt-no-duplicate', 'offline-disables-create', '375-390-1440-no-overflow'], pageErrors: errors };
+    'late-create-receipt-no-duplicate', 'offline-disables-create', 'mobile-session-list-primary-layout', '375-390-1440-no-overflow'], pageErrors: errors };
   writeFileSync(join(artifacts, 'browser-report.json'), JSON.stringify(report, null, 2), 'utf8'); console.log(JSON.stringify(report));
 } catch (error) { await page.screenshot({ path: join(artifacts, 'failure.png') }); throw error; }
 finally { await browser.close(); ws.terminate(); await app.close(); rmSync(dir, { recursive: true, force: true }); }

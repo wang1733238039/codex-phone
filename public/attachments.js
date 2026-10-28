@@ -136,7 +136,42 @@ const PhoneAttachments = (() => {
     const items = current(), box = $('attachment-drafts'); box.hidden = !items.length;
     const focused = box.contains(document.activeElement) ? document.activeElement.dataset.attachmentFocus : null;
     box.replaceChildren();
-    for (const item of items) {
+    const images = items.filter(item => item.kind === 'image'), files = items.filter(item => item.kind !== 'image');
+    if (images.length) {
+      const strip = el('div', 'attachment-image-strip');
+      strip.setAttribute('role', 'list'); strip.setAttribute('aria-label', `待发送图片，共 ${images.length} 张`);
+      for (const item of images) {
+        const tile = el('div', `attachment-image-tile${item.error ? ' has-error' : ''}${item.stage === 'ready' ? ' is-ready' : ''}`);
+        tile.setAttribute('role', 'listitem');
+        const source = previewSource(item);
+        const image = source ? previewButton(item.name, source, 'attachment-draft-preview', `${item.clientId}:preview`, item) :
+          el('button', 'attachment-image-unavailable');
+        if (!source) {
+          image.type = 'button'; image.setAttribute('aria-label', `图片 ${item.name} 暂无预览`);
+          image.disabled = !item.error;
+          image.append(icon('image'));
+          if (item.error) image.onclick = () => $('attachment-input').click();
+        }
+        tile.append(image);
+        const progress = el('progress', 'attachment-image-progress');
+        progress.max = item.size * 2;
+        progress.value = item.stage === 'ready' ? item.size * 2 :
+          item.stage === 'syncing' ? item.size + (item.remoteOffset || 0) : item.offset;
+        const caption = item.error || (item.stage === 'ready' ? '已传到电脑' : item.stage === 'syncing' ?
+          `传到电脑 ${Math.floor(item.remoteOffset / item.size * 100)}%` : `上传 ${Math.floor(item.offset / item.size * 100)}%`);
+        progress.setAttribute('aria-label', `${item.name} 上传进度`); progress.setAttribute('aria-valuetext', caption);
+        tile.append(progress);
+        if (item.error) {
+          const retry = el('button', 'attachment-image-retry', '重试'); retry.type = 'button';
+          retry.setAttribute('aria-label', `重试上传 ${item.name}`); retry.dataset.attachmentFocus = `${item.clientId}:retry`;
+          retry.onclick = () => { if (!item.file && item.offset < item.size) { notice('请选择同名原文件，继续上次上传'); $('attachment-input').click(); } else upload(item); };
+          tile.append(retry);
+        }
+        strip.append(tile);
+      }
+      box.append(strip);
+    }
+    for (const item of files) {
       const row = el('div', `attachment-draft${item.error ? ' has-error' : ''}`), info = el('div', 'attachment-info');
       const caption = item.error || (item.stage === 'ready' ? '已传到电脑' : item.stage === 'syncing' ?
         `传到电脑 ${Math.floor(item.remoteOffset / item.size * 100)}%${item.remoteOffset === item.size ? ' · 正在校验材料' : ''}` : `上传 ${Math.floor(item.offset / item.size * 100)}%`);
@@ -144,8 +179,7 @@ const PhoneAttachments = (() => {
       const progress = el('progress'); progress.max = item.size * 2;
       progress.value = item.stage === 'ready' ? item.size * 2 : item.stage === 'syncing' ? item.size + (item.remoteOffset || 0) : item.offset;
       progress.setAttribute('aria-label', `${item.name} 上传进度`); info.append(progress);
-      const source = previewSource(item);
-      row.append(source ? previewButton(item.name, source, 'attachment-draft-preview', `${item.clientId}:preview`) : icon(item.kind), info);
+      row.append(icon(item.kind), info);
       if (item.error) {
         const retry = el('button', 'text-button', '重试'); retry.type = 'button'; retry.dataset.attachmentFocus = `${item.clientId}:retry`;
         retry.onclick = () => { if (!item.file && item.offset < item.size) { notice('请选择同名原文件，继续上次上传'); $('attachment-input').click(); } else upload(item); };
@@ -166,7 +200,7 @@ const PhoneAttachments = (() => {
         'M3 5h18v14H3zM10 9l5 3-5 3z' : 'M5 3h9l5 5v13H5zM14 3v6h5M8 13h8m-8 4h6');
     svg.append(shape); return svg;
   }
-  function previewButton(name, source, className, focusId) {
+  function previewButton(name, source, className, focusId, draftItem = null) {
     const button = el('button', `attachment-preview-button ${className}`); button.type = 'button';
     button.setAttribute('aria-label', `预览图片 ${name}`); button.setAttribute('aria-haspopup', 'dialog');
     if (focusId) button.dataset.attachmentFocus = focusId;
@@ -175,12 +209,17 @@ const PhoneAttachments = (() => {
     image.onerror = () => {
       button.replaceChildren(icon('image'), el('span', 'attachment-preview-fallback', '点此重试预览'));
     };
-    button.append(image); button.onclick = () => showPreview(name, source);
+    button.append(image); button.onclick = () => showPreview(name, source, draftItem);
     return button;
   }
-  function showPreview(name, source) {
+  function showPreview(name, source, draftItem = null) {
     const dialog = $('attachment-preview-dialog'), image = $('attachment-preview-image');
     $('attachment-preview-name').textContent = name;
+    const removeButton = $('attachment-preview-remove');
+    removeButton.hidden = !draftItem;
+    removeButton.disabled = draftItem && readPendingEntries(draftItem.threadId, draftItem.deviceId)
+      .some(p => p.attachmentIds?.includes(draftItem.id)) && state.sending.has(key(draftItem.threadId, draftItem.deviceId));
+    removeButton.onclick = () => { if (draftItem) { dialog.close(); remove(draftItem); } };
     $('attachment-preview-status').textContent = '正在加载图片…'; $('attachment-preview-status').hidden = false;
     $('attachment-preview-retry').hidden = true;
     $('attachment-preview-viewport').classList.remove('is-zoomed');

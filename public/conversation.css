@@ -50,8 +50,22 @@
 .result-read-marker{display:block;width:100%;height:1px}
 .attachment-preview-button{display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:0;min-width:64px;min-height:64px}
 .attachment-preview-button:hover{border-color:var(--accent);background:var(--accent-soft)}
-.attachment-draft-preview{width:64px;height:64px}
-.attachment-draft-preview .attachment-thumbnail{width:62px;height:62px}
+.attachment-image-strip{display:flex;align-items:center;gap:6px;max-width:100%;overflow-x:auto;overflow-y:hidden;padding:4px 3px 8px;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scrollbar-width:thin;touch-action:pan-x}
+.attachment-image-tile{position:relative;width:52px;height:52px;flex:0 0 52px;scroll-snap-align:start}
+.attachment-draft-preview,.attachment-image-unavailable{position:absolute;inset:0;width:52px;height:52px;min-height:52px;min-width:52px;border-radius:8px;background:var(--bg)}
+.attachment-draft-preview .attachment-thumbnail{width:50px;height:50px;object-fit:cover}
+.attachment-image-unavailable{display:grid;place-items:center;border:1px solid var(--line);color:var(--muted);padding:0}
+.attachment-image-unavailable svg{width:24px;height:24px}
+.attachment-image-progress{appearance:none;position:absolute;z-index:2;left:2px;right:2px;bottom:2px;width:calc(100% - 4px);height:4px;margin:0;border:0;border-radius:4px;background:#18263c44;accent-color:var(--accent);pointer-events:none}
+.attachment-image-progress::-webkit-progress-bar{border-radius:4px;background:#18263c44}
+.attachment-image-progress::-webkit-progress-value{border-radius:4px;background:var(--accent)}
+.attachment-image-progress::-moz-progress-bar{border-radius:4px;background:var(--accent)}
+.attachment-image-tile.is-ready .attachment-image-progress::-webkit-progress-value{background:var(--green)}
+.attachment-image-tile.is-ready .attachment-image-progress::-moz-progress-bar{background:var(--green)}
+.attachment-image-tile.has-error .attachment-image-progress::-webkit-progress-value{background:var(--red)}
+.attachment-image-tile.has-error .attachment-image-progress::-moz-progress-bar{background:var(--red)}
+.attachment-image-retry{position:absolute;z-index:3;left:50%;top:50%;transform:translate(-50%,-50%);min-height:36px;padding:4px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--red);font-size:12px;font-weight:600}
+.attachment-image-retry:hover{background:var(--accent-soft)}
 .attachment-history-preview{width:96px;height:96px}
 .attachment-history-preview .attachment-thumbnail{width:94px;height:94px}
 .attachment-image-card .attachment-info{gap:8px}
@@ -98,7 +112,8 @@
   .queue-panel{margin:0 16px;max-height:22dvh}
   .queue-panel summary{min-height:36px}
   .attachment-drafts{max-height:88px;gap:4px}
-  .attachment-draft:has(.attachment-draft-preview){min-height:72px}
+  .attachment-drafts:has(.attachment-image-strip){max-height:96px;flex:0 0 auto}
+  .attachment-image-strip{gap:6px;padding-top:4px;padding-bottom:8px}
   .attachment-preview-dialog{width:100%;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0}
   .attachment-preview-header{padding:8px 12px;padding-top:max(8px,env(safe-area-inset-top))}
   .attachment-preview-actions{padding-bottom:max(12px,env(safe-area-inset-bottom));gap:8px}
@@ -111,4 +126,25 @@
   .composer textarea{max-height:72px}
   .delivery-status{max-height:30px;margin-bottom:4px}
   .execution-status{max-height:26px}
+}
+@media(max-width:760px){
+  .brand-row,.connection-strip,#account-banner{display:none}
+  .device-switch{margin:8px 14px 0;width:calc(100% - 28px);min-height:44px;padding:6px 10px}
+  .list-heading{padding:4px 14px 6px;gap:8px}
+  .list-heading h1{font-size:22px}
+  .list-heading .icon-button{width:44px;height:44px}
+  .search-box{min-height:44px;margin:0 14px 6px;padding:0 10px}
+  .search-box input{height:44px}
+  .result-filters{gap:6px;padding:0 14px 4px}
+  .result-filters button{padding:4px 10px}
+  .group-toolbar{margin:0 14px;min-height:40px}
+  .thread-list{padding:0 8px 16px}
+  .thread-group{margin:0 0 4px}
+  .group-label{padding:8px 10px 4px}
+  .group-toggle{min-height:44px;padding:6px 8px}
+  .group-threads{margin-left:10px}
+  .thread-row{padding:9px 10px;margin:1px 0;border-radius:10px}
+  .thread-title{font-size:15px;line-height:1.45}
+  .thread-preview{font-size:12px;margin-top:2px}
+  .thread-project{font-size:11px;margin-top:4px}
 }
