@@ -8,7 +8,7 @@ $taskFiles = @(
     'src/attachment-common.mjs', 'src/agent-attachments.mjs',
     'tools/pair.mjs', 'tools/remote-agent.mjs', 'tools/connector-status.mjs', 'tools/install-connector.mjs',
     'package.json', 'package-lock.json', 'README.md', 'start-remote-agent.ps1', 'start-remote-watch.ps1', 'install-remote-autostart.ps1',
-    'connector-control.ps1', 'install-connector-shortcuts.ps1',
+    'connector-control.ps1', 'connector-task.ps1', 'run-remote-watch.vbs', 'install-connector-shortcuts.ps1',
     'LICENSE', 'NOTICE', 'THIRD-PARTY-NOTICES.md',
     'vendor/agent-hub/LICENSE', 'vendor/agent-hub/PROVENANCE.json', 'vendor/agent-hub/package.json',
     'vendor/agent-hub/dist/desktop-ipc.mjs', 'vendor/agent-hub/dist/runtime-session.js', 'vendor/agent-hub/windows/desktop-pipe.ps1',

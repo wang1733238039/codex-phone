@@ -8,6 +8,7 @@ $taskConfig = Get-Content -LiteralPath $taskConfigPath -Raw -Encoding UTF8 | Con
 $taskShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 $taskStartupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Phone Remote Agent.lnk'
 $taskWsh = New-Object -ComObject WScript.Shell
+. (Join-Path $taskRoot 'connector-task.ps1')
 
 function Get-ConnectorProcess([string]$file, [string]$expectedName, [string]$expectedScript) {
     $path = Join-Path $taskRoot ('.data/' + $file)
@@ -28,20 +29,21 @@ function Get-ConnectorState {
         $shortcut = $taskWsh.CreateShortcut($taskStartupPath)
         $ownStartup = $shortcut.WorkingDirectory -eq $taskRoot
     }
+    $scheduled = Get-ConnectorScheduledTask
     [pscustomobject]@{
         running = [bool]$agent
         recoveryRunning = [bool]$watcher
-        autostart = $ownStartup
+        autostart = $ownStartup -or (Test-ConnectorTaskAutostart $scheduled)
         startupConflict = $registered -and -not $ownStartup
         processId = if ($agent) { $agent.ProcessId } else { $null }
+        scheduledRecovery = [bool]$scheduled
+        recoveryTask = if ($scheduled) { $scheduled.State.ToString() } else { $null }
+        independentRecovery = [bool]($scheduled -or (Get-ConnectorUserSupervisor))
     }
 }
 
 function Start-Connector {
-    if (Get-ConnectorProcess 'remote-watch.pid' 'powershell.exe' 'start-remote-watch.ps1') { return }
-    $watcher = Join-Path $taskRoot 'start-remote-watch.ps1'
-    $arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $watcher + '" -Run'
-    Start-Process -FilePath $taskShell -ArgumentList $arguments -WorkingDirectory $taskRoot -WindowStyle Hidden | Out-Null
+    Start-ConnectorScheduledTask | Out-Null
 }
 
 function Set-ConnectorAutostart([bool]$enabled) {

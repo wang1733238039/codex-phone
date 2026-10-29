@@ -6,7 +6,7 @@ import { ROOT } from '../src/config.mjs';
 const stage = resolve(ROOT, '.data', 'connector-package'), output = resolve(ROOT, 'public', 'downloads');
 mkdirSync(stage, { recursive: true }); mkdirSync(output, { recursive: true });
 const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
-const manifest = { name: 'codex-phone-connector', version: '0.6.0', private: true, type: 'module', license: 'AGPL-3.0-only', engines: { node: '>=24.0.0' },
+const manifest = { name: 'codex-phone-connector', version: '0.6.1', private: true, type: 'module', license: 'AGPL-3.0-only', engines: { node: '>=24.0.0' },
   scripts: { pair: 'node tools/pair.mjs', agent: 'node tools/remote-agent.mjs', 'install-connector': 'node tools/install-connector.mjs' },
   dependencies: { ws: lock.packages['node_modules/ws'].version } };
 writeFileSync(join(stage, 'package.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
@@ -17,7 +17,7 @@ const files = ['src/agent.mjs', 'src/desktop.mjs', 'src/config.mjs', 'src/codex.
   'src/attachment-common.mjs', 'src/agent-attachments.mjs',
   'tools/pair.mjs', 'tools/remote-agent.mjs', 'tools/connector-status.mjs', 'tools/install-connector.mjs',
   'start-remote-agent.ps1', 'start-remote-watch.ps1', 'install-remote-autostart.ps1',
-  'connector-control.ps1', 'install-connector-shortcuts.ps1',
+  'connector-control.ps1', 'connector-task.ps1', 'run-remote-watch.vbs', 'install-connector-shortcuts.ps1',
   'LICENSE', 'NOTICE', 'THIRD-PARTY-NOTICES.md',
   'vendor/agent-hub/LICENSE', 'vendor/agent-hub/PROVENANCE.json', 'vendor/agent-hub/package.json',
   'vendor/agent-hub/dist/desktop-ipc.mjs', 'vendor/agent-hub/dist/runtime-session.js', 'vendor/agent-hub/windows/desktop-pipe.ps1',

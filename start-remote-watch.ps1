@@ -4,9 +4,8 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $taskShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 if (-not $Run) {
-    $taskArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Run'
-    $taskProcess = Start-Process -FilePath $taskShell -ArgumentList $taskArguments -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
-    Write-Output "Remote watcher launched: $($taskProcess.Id)"
+    . (Join-Path $PSScriptRoot 'connector-task.ps1')
+    Start-ConnectorScheduledTask
     exit 0
 }
 $taskHash = [System.Security.Cryptography.SHA256]::Create()
@@ -21,6 +20,7 @@ try {
     try { $taskOwned = $taskMutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $taskOwned = $true }
     if (-not $taskOwned) { exit 0 }
     $PID | Set-Content -Encoding UTF8 -LiteralPath $taskWatchPid
+    "$(Get-Date -Format o) watcher started pid=$PID" | Add-Content -Encoding UTF8 -LiteralPath $taskLog
     while ($true) {
         try {
             $taskExisting = $null

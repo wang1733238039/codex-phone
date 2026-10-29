@@ -56,6 +56,7 @@ node tools/install-connector.mjs
 - 双击快捷方式，打开连接管理窗口并在需要时启动后台连接。重复打开不会启动第二个连接进程。
 - 勾选“登录 Windows 后自动启动连接”，以后重启并登录 Windows 后自动连接；取消勾选即可关闭自启，当前连接继续运行。
 - 关闭管理窗口不会停止后台连接；电脑关机、休眠后暂停，恢复联网时连接端会重试。
+- Windows 后台守护独立于启动它的终端和 Codex：优先用当前用户计划任务托管；系统拒绝注册计划任务时，自动使用 Explorer 启动的隐藏守护和登录启动项。连接进程或内层守护退出后会自动恢复，恢复检查间隔约 20 秒。配对配置和电脑身份不变。
 - 窗口显示本机连接进程和后台守护状态。服务器的真实在线状态以手机电脑列表为准。
 - “打开手机网页”使用本机配对的网址；“查看日志”打开本机 `.data` 目录，分享日志时不要把同目录的凭据文件一起发出。
 
@@ -69,7 +70,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File install-remote-autostart
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File install-remote-autostart.ps1 -Disable
 ```
 
-`-Disable` 只移除此安装目录拥有的登录自启项，不停止当前连接，也不修改其他安装目录的入口。自启在登录当前 Windows 用户后发生，电脑仍须保持开机、联网且 Codex 可用。
+`-Disable` 只关闭此安装目录拥有的登录及定期启动触发器，不停止当前连接，也不修改其他安装目录的入口。自启在登录当前 Windows 用户后发生，电脑仍须保持开机、联网且 Codex 可用。
+
+升级已有 Windows 安装时，保留原目录和 `.data/agent.remote.json`，更新程序后再次运行 `node tools/install-connector.mjs`。仅 `git pull` 不会替换已经运行的后台守护；无手机连接程序持有的任务时可重启连接程序，桌面 Codex 无需退出。取消自启后，当前后台守护仍运行；独立守护本身被手动结束时，登录启动项方案需要双击桌面入口或重新登录恢复。
 
 ## 验证
 
