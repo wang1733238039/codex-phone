@@ -471,7 +471,7 @@ async function checkPending() {
       if (typeof p.submitted === 'string' && $('message').value === p.submitted) { $('message').value = ''; if (state.drafts.get(selectedKey()) === p.submitted) state.drafts.delete(selectedKey()); }
       delivery(deliveryText(data.result)); refresh = true;
     } else if (data?.state === 'failed') { clearPending(id, deviceId, p.id); delivery(data.result?.error || '消息未执行，可以重新发送', true); }
-    else if (data?.state === 'unknown' || data?.state === 'not_found' || !data) refresh = true;
+    else if (data?.state === 'unknown' || data?.state === 'pending' || data?.state === 'not_found' || !data) refresh = true;
   }
   updateComposer();
   // A timed-out command may have completed even when its acknowledgement was
