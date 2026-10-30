@@ -471,8 +471,18 @@ async function checkPending() {
       if (typeof p.submitted === 'string' && $('message').value === p.submitted) { $('message').value = ''; if (state.drafts.get(selectedKey()) === p.submitted) state.drafts.delete(selectedKey()); }
       delivery(deliveryText(data.result)); refresh = true;
     } else if (data?.state === 'failed') { clearPending(id, deviceId, p.id); delivery(data.result?.error || '消息未执行，可以重新发送', true); }
+    else if (data?.state === 'unknown' || data?.state === 'not_found' || !data) refresh = true;
   }
-  updateComposer(); if (refresh) await loadDetail(true);
+  updateComposer();
+  // A timed-out command may have completed even when its acknowledgement was
+  // lost. Re-read the desktop transcript so the phone can show its real result;
+  // never clear the duplicate-send guard based on an unknown receipt alone.
+  if (refresh && id === state.selected && deviceId === state.deviceId) {
+    await loadDetail(true);
+    if (readPendingEntries(id, deviceId).length && id === state.selected && deviceId === state.deviceId) {
+      delivery(state.detail?.refreshError ? `发送回执未确认，且电脑历史刷新失败：${state.detail.refreshError}。请不要重复发送。` : '发送回执仍未确认，已重新读取电脑会话；请核对消息结果，不要重复发送。', true);
+    }
+  } else if (refresh) await loadDetail(true);
 }
 $('message').addEventListener('input', updateComposer);
 $('send-mode').addEventListener('change', updateComposer);
