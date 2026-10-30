@@ -137,7 +137,23 @@ export class Agent {
     if (action === 'detail') {
       const detail = await this.source.detail(data.threadId);
       detail.ownedTurn = this.active.get(data.threadId) || null;
-      return this.config.controlsEnabled ? { ...detail, ...await this.runtime(data.threadId, detail) } : detail;
+      if (!this.config.controlsEnabled) return detail;
+      const timeoutMs = Math.max(100, Number(this.config.detailRuntimeTimeoutMs) || 15000);
+      let timer;
+      try {
+        const runtime = await Promise.race([
+          this.runtime(data.threadId, detail),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('读取电脑运行状态超时')), timeoutMs); }),
+        ]);
+        return { ...detail, ...runtime };
+      } catch (error) {
+        // Conversation text is already read locally. A slow desktop/runtime
+        // status check must not hide completed replies behind the relay timeout.
+        return { ...detail, queue: [], queueKnown: false,
+          execution: { state: detail.running ? 'unconfirmed' : detail.turnStatus || 'idle', owned: false,
+            turnId: null, lastActivityAt: detail.lastActivityAt, verified: false, statusError: this.friendlyError(error) },
+          settings: { model: '', effort: '' } };
+      } finally { clearTimeout(timer); }
     }
     if (action === 'models') return { models: await this.models() };
     if (['attachment-start', 'attachment-chunk', 'attachment-finish'].includes(action)) {

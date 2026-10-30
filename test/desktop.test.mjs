@@ -84,6 +84,16 @@ test('agent never starts a parallel CLI task after an uncertain desktop send', a
     error => error.uncertain === true);
   assert.equal(cliStarts, 0); assert.equal(agent.inflight.size, 0);
 });
+test('a slow runtime status lookup cannot block already-read conversation replies', async () => {
+  const detail = { id, messages: [{ role: 'assistant', phase: 'final_answer', text: '已完成的回复' }],
+    running: false, turnStatus: 'completed', lastActivityAt: Date.now(), transcriptVersion: 2 };
+  const agent = { config: { controlsEnabled: true, detailRuntimeTimeoutMs: 10 }, active: new Map(),
+    source: { detail: async () => detail }, runtime: async () => new Promise(() => {}), friendlyError: error => error.message };
+  const result = await Agent.prototype.handle.call(agent, 'detail', { threadId: id });
+  assert.equal(result.messages[0].text, '已完成的回复');
+  assert.equal(result.execution.verified, false);
+  assert.match(result.execution.statusError, /运行状态超时/);
+});
 test('desktop controls recheck the turn immediately before the execution write', async () => {
   for (const mode of ['steer', 'stop', 'start']) {
     const f = fixture();
