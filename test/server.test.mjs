@@ -112,13 +112,13 @@ test('Unicode list, pagination, cache, disconnected commands and idempotency', a
   const list = await (await f.request('/api/threads?q=' + encodeURIComponent('中文'))).json(); assert.equal(list.threads.length, 1); assert.equal(list.computer, '测试电脑');
   assert.equal((await (await f.request('/api/threads?archived=true')).json()).threads[0].id, archivedId);
   const detail = await (await f.request(`/api/threads/${id}?limit=80`)).json(); assert.equal(detail.messages.length, 80); assert.equal(detail.before, 60); assert.equal(detail.total, 140);
-  const earlier = await (await f.request(`/api/threads/${id}?before=60`)).json(); assert.equal(earlier.messages[59].text, '中文消息 59'); assert.equal(earlier.before, null);
+  const earlier = await (await f.request(`/api/threads/${id}?limit=80&before=60`)).json(); assert.equal(earlier.messages[59].text, '中文消息 59'); assert.equal(earlier.before, null);
   const requestId = randomUUID();
   const responses = await Promise.all([f.request(`/api/threads/${id}/send`, { requestId, text: 'test' }), f.request(`/api/threads/${id}/send`, { requestId, text: 'test' })]);
   assert.equal(responses[0].status, 200); assert.equal(responses[1].status, 200); assert.equal(sends, 1);
   assert.equal((await (await f.request(`/api/commands/${requestId}`)).json()).state, 'accepted');
   ws.close(); await until(() => !f.app.status().online);
-  const cached = await (await f.request(`/api/threads/${id}`)).json(); assert.equal(cached.online, false); assert.equal(cached.fromCache, true); assert.equal(cached.messages.length, 80);
+  const cached = await (await f.request(`/api/threads/${id}`)).json(); assert.equal(cached.online, false); assert.equal(cached.fromCache, true); assert.equal(cached.messages.length, 15);
   assert.equal((await f.request(`/api/threads/${id}/send`, { requestId: randomUUID(), text: 'offline' })).status, 503);
   const duplicate = await (await f.request(`/api/threads/${id}/send`, { requestId, text: 'test' })).json(); assert.equal(duplicate.duplicate, true); assert.equal(sends, 1);
 });

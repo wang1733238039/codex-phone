@@ -321,7 +321,7 @@ async function loadDetail(force = false, initial = false) {
   const id = state.selected, deviceId = state.deviceId; if (!id || (!force && detailBusy)) return;
   const seq = ++state.detailSeq; detailBusy = true; if (initial) $('messages').setAttribute('aria-busy', 'true');
   try {
-    const data = await deviceApi(`/threads/${id}?limit=80${force ? '&refresh=1' : ''}`, undefined, deviceId);
+    const data = await deviceApi(`/threads/${id}?limit=15${force ? '&refresh=1' : ''}`, undefined, deviceId);
     if (seq !== state.detailSeq || id !== state.selected || deviceId !== state.deviceId) return;
     const old = state.detail;
     if (old && old.transcriptVersion === data.transcriptVersion && old.total <= data.total) {
@@ -369,7 +369,7 @@ function renderMessages(initial = false, prepended = false) {
 }
 async function older(button) {
   const id = state.selected, deviceId = state.deviceId, seq = state.deviceSeq, cursor = state.detail?.before; if (cursor == null) return; button.disabled = true;
-  try { const data = await deviceApi(`/threads/${id}?limit=80&before=${cursor}`, undefined, deviceId); if (deviceId !== state.deviceId || seq !== state.deviceSeq || id !== state.selected || state.detail?.before !== cursor) return; if (data.transcriptVersion !== state.detail.transcriptVersion) { await loadDetail(true, true); return; } state.detail.messages = [...data.messages, ...state.detail.messages]; state.detail.before = data.before; renderMessages(false, true); }
+  try { const data = await deviceApi(`/threads/${id}?limit=15&before=${cursor}`, undefined, deviceId); if (deviceId !== state.deviceId || seq !== state.deviceSeq || id !== state.selected || state.detail?.before !== cursor) return; if (data.transcriptVersion !== state.detail.transcriptVersion) { await loadDetail(true, true); return; } state.detail.messages = [...data.messages, ...state.detail.messages]; state.detail.before = data.before; renderMessages(false, true); }
   catch (error) { notice(error.message); button.disabled = false; }
 }
 function resizeComposer() {

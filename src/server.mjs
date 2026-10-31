@@ -447,7 +447,7 @@ export function createApp(config) {
             catch (error) { refreshError = error.message; if (!detail) throw error; }
           }
           if (!detail) throw new HttpError(503, '电脑离线，此会话尚未缓存；请在电脑上线后打开一次');
-          const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 80));
+          const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 15));
           const end = url.searchParams.has('before') ? Math.max(0, Math.min(detail.messages.length, Number(url.searchParams.get('before')) || 0)) : detail.messages.length;
           const start = Math.max(0, end - limit);
           const runningStale = Boolean(detail.running && online(deviceId) &&
