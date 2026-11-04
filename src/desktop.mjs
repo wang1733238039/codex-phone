@@ -95,8 +95,9 @@ export class DesktopBridge {
     const turn = desktopTurns(state).at(-1), active = runningTurn(state);
     const settings = state.latestThreadSettings || {};
     this.collectApprovals(id);
-    return { execution: { state: active ? 'running' : turn?.status || 'idle', owned: true,
-      turnId: active?.turnId || null, verified: true, channel: 'desktop' },
+    return { execution: { state: active ? 'running' : state.threadRuntimeStatus?.type === 'systemError' ? 'failed' : turn?.status || 'idle', owned: Boolean(active),
+      turnId: active?.turnId || null, verified: true, channel: 'desktop',
+      ...(turn?.error ? { error: typeof turn.error === 'string' ? turn.error : turn.error.message || '桌面任务执行失败' } : {}) },
       settings: { model: settings.model || state.latestModel || turn?.params?.model || '',
         effort: settings.effort ?? settings.reasoningEffort ?? state.latestReasoningEffort ?? '' } };
   }
@@ -107,6 +108,7 @@ export class DesktopBridge {
     finally { this.changed(id); }
   }
   async send(id, data, input, selection, state) {
+    if (state.canAcceptDirectInput === false || state.thread?.canAcceptDirectInput === false) throw new Error('Codex 当前不接受此子对话直接输入，请返回父对话安排后续任务');
     const active = runningTurn(state);
     if (data.mode === 'steer') {
       if (!active) throw new Error('原桌面当前没有进行中的任务，请正常发送');
@@ -124,8 +126,13 @@ export class DesktopBridge {
       return { turnId: result.turnId || active.turnId, delivery: 'steered', channel: 'desktop' };
     }
     if (busy(state) || data.mode === 'queue') return null;
+    const collaboration = state.latestThreadSettings?.collaborationMode || state.latestCollaborationMode;
+    const modelSettings = selection.model && collaboration?.settings ? {
+      collaborationMode: { ...collaboration, settings: { ...collaboration.settings, model: selection.model,
+        ...(selection.effort ? { reasoning_effort: selection.effort } : {}) } },
+    } : {};
     const result = await this.command(id, 'thread-follower-start-turn', {
-      turnStart: { request: { threadId: id, clientUserMessageId: data.requestId, ...selection,
+      turnStart: { request: { threadId: id, clientUserMessageId: data.requestId, ...selection, ...modelSettings,
         input: input.map(item => item.type === 'text' ? { ...item, text_elements: item.text_elements || [] } : item),
         attachments: [], commentAttachments: [] }, context: { inheritThreadSettings: true } },
     }, () => {

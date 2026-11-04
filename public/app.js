@@ -3,8 +3,9 @@ const $ = id => document.getElementById(id);
 const state = { csrf: '', username: '', primaryDeviceId: '', deviceId: '', devices: [], directoryStream: null,
   view: 'recent', threads: [], groups: [], selected: null, detail: null, status: {}, stream: null, listSeq: 0, detailSeq: 0,
   pending: null, drafts: new Map(), sending: new Set(), deviceViews: new Map(), deviceSeq: 0, directorySeq: 0,
-  models: [], modelError: '', options: new Map(), projects: [], resultFilter: 'all', resultSeen: new Set(), resultReadAt: new Map(), listReady: false };
-let toastTimer, searchTimer, refreshTimer, polling, runningRefreshTimer, deliveryTimer, runningRefreshAt = 0;
+  models: [], modelError: '', options: new Map(), projects: [], resultFilter: 'all', resultSeen: new Set(), resultReadAt: new Map(), listReady: false,
+  family: null, familySeq: 0, familyError: '', readingViews: new Map() };
+let toastTimer, searchTimer, refreshTimer, polling, runningRefreshTimer, deliveryTimer, runningRefreshAt = 0, sessionEpoch = 0;
 const scopeKey = (threadId, deviceId = state.deviceId) => `${state.username}:${deviceId}:${threadId}`;
 const deviceApi = (path, data, deviceId = state.deviceId) => api(`/api/devices/${deviceId}${path}`, data);
 const selectedKey = () => scopeKey(state.selected);
@@ -27,6 +28,8 @@ async function api(path, data) {
   return result;
 }
 function showLogin() {
+  sessionEpoch++;
+  resetFamily(); state.readingViews.clear();
   PhoneAccounts.clear();
   $('new-thread-dialog').close(); state.resultSeen.clear(); state.resultReadAt.clear(); state.listReady = false; state.projects = [];
   $('composer-settings-dialog').close(); clearTimeout(deliveryTimer);
@@ -68,7 +71,7 @@ async function loadDevices() {
   state.primaryDeviceId = data.primaryDeviceId; state.devices = data.devices;
   PhoneAccounts.update(data.account);
   if (state.deviceId && !state.devices.some(d => d.id === state.deviceId)) {
-    saveCurrentView(); state.deviceId = ''; state.stream?.close(); state.listSeq++; state.detailSeq++; state.deviceSeq++;
+    saveCurrentView(); resetFamily(); state.deviceId = ''; state.stream?.close(); state.listSeq++; state.detailSeq++; state.deviceSeq++;
     state.selected = null; state.detail = null; state.status = {}; state.threads = []; state.groups = []; state.pending = null; detailBusy = false;
     $('chat').hidden = true; $('welcome').hidden = false; $('app-view').classList.remove('chat-open'); $('messages').replaceChildren();
     $('approval-panel').replaceChildren(); $('approval-panel').hidden = true;
@@ -79,13 +82,14 @@ async function loadDevices() {
 }
 function saveCurrentView() {
   if (!state.deviceId) return;
+  rememberReadingPosition();
   if (state.selected) state.drafts.set(selectedKey(), $('message').value);
   state.deviceViews.set(state.deviceId, { view: state.view, search: $('search').value, selected: state.selected, scroll: $('thread-list').scrollTop });
 }
 async function switchDevice(deviceId, push = true, threadId) {
   if (!state.devices.some(d => d.id === deviceId)) return;
   $('composer-settings-dialog').close(); $('send-mode').value = 'auto';
-  saveCurrentView(); clearTimeout(searchTimer); clearTimeout(refreshTimer); clearTimeout(runningRefreshTimer); runningRefreshTimer = null;
+  saveCurrentView(); resetFamily(); clearTimeout(searchTimer); clearTimeout(refreshTimer); refreshTimer = null; clearTimeout(runningRefreshTimer); runningRefreshTimer = null;
   state.stream?.close(); state.listSeq++; state.detailSeq++; const seq = ++state.deviceSeq; detailBusy = false;
   state.deviceId = deviceId; state.selected = null; state.detail = null; state.pending = null; state.threads = []; state.groups = []; state.models = []; state.modelError = '';
   state.resultFilter = 'all'; state.projects = []; state.listReady = false;
@@ -103,7 +107,7 @@ async function switchDevice(deviceId, push = true, threadId) {
   await loadList(); if (seq !== state.deviceSeq) return;
   $('thread-list').scrollTop = remembered?.scroll || 0;
   const id = threadId ?? remembered?.selected;
-  if (id && state.threads.some(t => t.id === id)) await openThread(id, false);
+  if (id) await openThread(id, false);
 }
 function renderDevices() {
   $('device-label').textContent = state.deviceId ? deviceName(state.deviceId) : '选择电脑';
@@ -126,7 +130,7 @@ function renderDevices() {
   if (focused && $('devices-dialog').open) [...box.querySelectorAll('[data-device-focus]')].find(node => node.dataset.deviceFocus === focused)?.focus({ preventScroll: true });
 }
 $('login-form').addEventListener('submit', async event => {
-  event.preventDefault(); $('login-error').hidden = true; $('login-button').disabled = true;
+  event.preventDefault(); sessionEpoch++; $('login-error').hidden = true; $('login-button').disabled = true;
   try { await enterApp(await api('/api/login', { username: $('username').value.trim(), password: $('password').value })); $('password').value = ''; }
   catch (error) { $('login-error').textContent = error.message; $('login-error').hidden = false; }
   finally { $('login-button').disabled = false; }
@@ -137,24 +141,44 @@ function updateStatus(data) {
   const wasOnline = Boolean(state.status.online);
   state.status = { ...state.status, ...Object.fromEntries(['online', 'computer', 'lastSync', 'lastSeen', 'controls', 'activeTurns', 'approvals', 'connectionId', 'capabilities', 'connectorVersion'].filter(k => k in data).map(k => [k, data[k]])) };
   const s = state.status; $('connection-dot').classList.toggle('online', !!s.online); $('connection-label').textContent = s.online ? '电脑在线' : '电脑离线 · 可看缓存';
-  if (s.online && !wasOnline && state.deviceId) void loadModels();
+  if (s.online && state.deviceId && (!wasOnline || !state.models.length)) void loadModels();
   renderResultControls();
   $('connection-time').textContent = s.lastSync ? `${date(s.lastSync, true)} 同步` : '等待首次同步'; $('computer-name').textContent = s.computer || '我的电脑';
   if (state.detail && !s.online) { $('cache-banner').hidden = false; $('cache-banner').textContent = `电脑已离线。正在显示 ${date(state.detail.syncedAt, true)} 的缓存记录。`; }
   if ($('status-dialog').open) renderStatus(); updateComposer(); renderApprovals(); renderTask();
 }
-async function loadModels() {
-  const deviceId = state.deviceId, seq = state.deviceSeq; if (!deviceId) return;
+let modelRequest = null, modelRead = null;
+function loadModels(force = false) {
+  const deviceId = state.deviceId, seq = state.deviceSeq;
+  if (!deviceId || !state.status.online) return Promise.resolve();
+  if (modelRequest?.deviceId === deviceId && modelRequest.seq === seq) return modelRequest.promise;
+  if (!force && modelRead?.deviceId === deviceId && modelRead.seq === seq && Date.now() < modelRead.retryAt) return Promise.resolve();
+  const request = modelRequest = { deviceId, seq };
+  request.promise = readModels(request);
+  updateModelControls();
+  return request.promise;
+}
+async function readModels(request) {
+  const { deviceId, seq } = request;
   try {
     const data = await deviceApi('/models', undefined, deviceId);
     if (seq !== state.deviceSeq || deviceId !== state.deviceId) return;
     state.models = data.models || []; state.modelError = state.models.length ? '' : '连接程序未提供模型列表';
-  } catch (error) { if (deviceId !== state.deviceId || seq !== state.deviceSeq) return; state.modelError = error.message; }
-  renderModels();
+  } catch (error) {
+    if (deviceId !== state.deviceId || seq !== state.deviceSeq) return;
+    state.modelError = error.message;
+  } finally {
+    if (modelRequest === request) modelRequest = null;
+    if (seq === state.deviceSeq && deviceId === state.deviceId) {
+      modelRead = { deviceId, seq, retryAt: Date.now() + (state.modelError ? 10000 : 60000) };
+      renderModels();
+    }
+  }
 }
 function modelOptions() {
   const key = selectedKey(); if (state.options.has(key)) return state.options.get(key);
-  let value = {}; try { value = JSON.parse(localStorage.getItem(`codex-phone-model:${key}`)) || {}; } catch {}
+  // Old persisted choices were not confirmed desktop settings. Start by following the session.
+  let value = {};
   state.options.set(key, value); return value;
 }
 function renderModels() {
@@ -172,13 +196,18 @@ function renderModels() {
 }
 function updateModelControls() {
   const steer = $('send-mode').value === 'steer' && state.status.activeTurns?.some(t => t.threadId === state.selected);
-  $('model-select').disabled = Boolean(steer || !state.status.online || !state.models.length);
-  $('effort-select').disabled = Boolean(steer || !state.status.online || !state.models.some(m => m.id === modelOptions().model));
-  $('models-note').textContent = steer ? '补充本轮沿用正在执行的模型；切回正常 / 排队后可选择后续模型。' :
+  $('model-select').disabled = Boolean(childReadOnly() || steer || !state.status.online || !state.models.length);
+  $('effort-select').disabled = Boolean(childReadOnly() || steer || !state.status.online || !state.models.some(m => m.id === modelOptions().model));
+  const loadingModels = modelRequest?.deviceId === state.deviceId && modelRequest.seq === state.deviceSeq;
+  $('models-note').textContent = loadingModels ? '正在读取这台电脑的模型列表…' : steer ? '补充本轮沿用正在执行的模型；切回正常 / 排队后可选择后续模型。' :
     state.modelError ? `模型列表：${state.modelError}；可用“跟随会话”发送` : '模型用于后续消息；桌面占用时，排队发送请选“跟随会话”。';
+  const retry = el('button', 'text-button', loadingModels ? '读取中…' : '刷新模型列表'); retry.type = 'button';
+  retry.disabled = loadingModels || !state.status.online; retry.onclick = () => void loadModels(true);
+  $('models-note').append(retry);
   const choice = modelOptions(), labels = { none: '无', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最高', ultra: 'Ultra' };
+  const currentModel = state.detail?.settings?.model || state.detail?.thread?.model;
   const summary = steer ? '补充本轮' : choice.model ?
-    `${state.models.find(m => m.id === choice.model)?.name || choice.model}${choice.effort ? ` · ${labels[choice.effort] || choice.effort}` : ''}` : '设置';
+    `下次：${state.models.find(m => m.id === choice.model)?.name || choice.model}${choice.effort ? ` · ${labels[choice.effort] || choice.effort}` : ''}` : currentModel || '模型 / 设置';
   $('composer-settings-label').textContent = summary;
   $('composer-settings-button').classList.toggle('has-overrides', Boolean(steer || choice.model));
   $('composer-settings-button').title = `消息设置：${summary}`;
@@ -192,6 +221,11 @@ for (const id of ['model-select', 'effort-select']) $(id).addEventListener('chan
 function renderTask() {
   const d = state.detail, box = $('execution-status'); if (!d) { box.textContent = ''; $('queue-panel').hidden = true; return; }
   const e = d.execution || { state: d.running ? 'unconfirmed' : d.turnStatus || 'idle', lastActivityAt: d.lastActivityAt };
+  if (childReadOnly()) {
+    const labels = { running: '正在执行', completed: '已完成', interrupted: '已中断', failed: '失败', idle: '空闲', unconfirmed: '执行状态未确认' };
+    box.textContent = `${labels[e.state] || '状态未确认'}${!state.status.online ? ' · 离线缓存' : ''}${e.lastActivityAt ? ` · 最近活动 ${date(e.lastActivityAt, true)}` : ''}`;
+    box.classList.toggle('warning', ['unconfirmed', 'failed', 'interrupted'].includes(e.state)); $('queue-panel').hidden = true; return;
+  }
   const labels = { running: '正在执行，可继续排队或补充本轮', completed: '上一轮已完成，可以继续',
     interrupted: '上一轮已中断，可以继续；中断不一定产生最终回复', failed: '上一轮失败，可以继续',
     idle: '当前空闲，可以继续', unconfirmed: '未确认任务是否仍在执行；可以提交下一条，桌面占用时会排队' };
@@ -226,9 +260,10 @@ function renderStatus() {
 function connectEvents() {
   state.stream?.close(); const deviceId = state.deviceId, stream = state.stream = new EventSource(`/api/devices/${deviceId}/events`);
   const current = () => state.deviceId === deviceId && state.stream === stream;
+  stream.addEventListener('open', () => { if (current()) { void loadList(); if (state.selected) void loadDetail(true); void loadModels(); } });
   stream.addEventListener('list', () => { if (current()) loadList(); });
   stream.addEventListener('status', async () => { try { const data = await deviceApi('/status', undefined, deviceId); if (current()) updateStatus(data); } catch { if (current()) markDisconnected(); } });
-  stream.addEventListener('changed', event => { if (!current()) return; const data = JSON.parse(event.data); if (data.threadId === state.selected) { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (current()) loadDetail(true); }, 800); } });
+  stream.addEventListener('changed', event => { if (!current()) return; const data = JSON.parse(event.data); if (data.threadId === state.selected && !refreshTimer) { const id = state.selected; refreshTimer = setTimeout(() => { refreshTimer = null; if (current() && id === state.selected) void loadDetail(true); }, 800); } });
   stream.addEventListener('revoked', () => { if (current()) loadDevices().catch(() => {}); });
   stream.onerror = () => { if (current()) markDisconnected(); };
 }
@@ -241,7 +276,7 @@ async function loadList() {
     syncResultNotice(state.threads, data.threads); state.threads = data.threads; state.projects = data.sidebar?.projects || [];
     state.groups = data.groups || [{ id: 'unassigned', name: '会话', kind: 'chats', expanded: true, threadIds: data.threads.map(t => t.id) }]; $('list-error').hidden = true;
     $('thread-count').textContent = $('search').value ? data.threads.length : state.view === 'archived' ? data.archivedCount : data.total;
-    updateStatus(data); renderList();
+    updateStatus(data); renderList(); if (state.selected) void loadFamily();
   } catch (error) { if (seq !== state.listSeq) return; $('list-error').textContent = `${error.message}。点击右上角刷新重试。`; $('list-error').hidden = false; if (!state.threads.length) $('thread-list').replaceChildren(el('div', 'list-empty', '暂时无法读取会话')); }
 }
 function groupExpanded(group) {
@@ -274,8 +309,9 @@ function renderList() {
     heading.append(toggle); section.append(heading, body); fragment.append(section);
     for (const id of group.threadIds) {
       const thread = byId.get(id); if (!thread) continue;
-    const row = el('button', `thread-row${state.selected === thread.id ? ' selected' : ''}`); row.type = 'button'; row.dataset.threadId = thread.id;
-    row.setAttribute('aria-pressed', String(state.selected === thread.id)); const top = el('span', 'thread-top'); top.append(el('span', 'thread-title', thread.title), el('time', 'thread-time', date(thread.updatedAt)));
+    const selected = state.selected === thread.id || state.family?.rootId === thread.id;
+    const row = el('button', `thread-row${selected ? ' selected' : ''}`); row.type = 'button'; row.dataset.threadId = thread.id;
+    row.setAttribute('aria-pressed', String(selected)); const top = el('span', 'thread-top'); top.append(el('span', 'thread-title', thread.title), el('time', 'thread-time', date(thread.updatedAt)));
       row.append(top, el('span', 'thread-preview', thread.preview?.replace(/\s+/g, ' ') || '打开查看聊天记录'));
       if (group.kind !== 'project') row.append(el('span', 'thread-project', project(thread)));
       appendResultStatus(row, thread); body.append(row);
@@ -299,27 +335,44 @@ $('thread-list').addEventListener('click', event => {
 });
 async function openThread(id, push = true) {
   if (!state.deviceId) return;
+  if (id === state.selected) { await loadDetail(true); return; }
   $('composer-settings-dialog').close(); $('send-mode').value = 'auto';
   if (state.selected) state.drafts.set(selectedKey(), $('message').value);
+  rememberReadingPosition(); resetFamily(id);
   const group = state.groups.find(g => g.threadIds.includes(id)); if (group && !groupExpanded(group)) setGroupExpanded(group.id, true);
-  state.selected = id; state.detail = null; state.detailSeq++; detailBusy = false; state.pending = readPending(id); $('message').value = state.drafts.get(selectedKey()) || '';
+  state.selected = id; const remembered = state.readingViews.get(selectedKey());
+  state.detail = remembered?.detail || null; state.detailSeq++; detailBusy = false; state.pending = readPending(id); $('message').value = state.drafts.get(selectedKey()) || '';
   $('app-view').classList.add('chat-open'); $('welcome').hidden = true; $('chat').hidden = false; $('cache-banner').hidden = true;
   $('chat-title').textContent = state.threads.find(t => t.id === id)?.title || '正在打开会话'; $('chat-project').textContent = ''; $('messages').replaceChildren(el('div', 'list-empty', '正在读取聊天记录…'));
+  if (remembered) { $('chat-title').textContent = remembered.detail.thread.title; renderMessages(); $('messages').scrollTop = remembered.scrollTop; }
   if (push) history.pushState({ thread: id }, '', routeHash());
   else history.replaceState(null, '', routeHash());
-  $('delivery-status').hidden = true; renderModels(); renderList(); updateComposer(); await loadDetail(true, true);
+  $('delivery-status').hidden = true; renderModels(); renderFamily(); renderList(); updateComposer();
+  await Promise.all([loadDetail(true, !remembered), loadFamily()]);
 }
-function backToList() { $('composer-settings-dialog').close(); if (state.selected) state.drafts.set(selectedKey(), $('message').value); state.selected = null; state.detail = null; state.detailSeq++; detailBusy = false; state.pending = null; $('app-view').classList.remove('chat-open'); $('chat').hidden = true; $('welcome').hidden = false; renderList(); }
+function backToList() { $('composer-settings-dialog').close(); if (state.selected) state.drafts.set(selectedKey(), $('message').value); rememberReadingPosition(); resetFamily(); state.selected = null; state.detail = null; state.detailSeq++; detailBusy = false; state.pending = null; $('app-view').classList.remove('chat-open'); $('chat').hidden = true; $('welcome').hidden = false; renderList(); }
 window.addEventListener('popstate', () => {
   const route = readRoute();
   if (route.deviceId && route.deviceId !== state.deviceId) switchDevice(route.deviceId, false, route.threadId).catch(e => notice(e.message));
   else if (route.threadId) openThread(route.threadId, false);
   else backToList();
 });
-let detailBusy = false;
-async function loadDetail(force = false, initial = false) {
-  const id = state.selected, deviceId = state.deviceId; if (!id || (!force && detailBusy)) return;
-  const seq = ++state.detailSeq; detailBusy = true; if (initial) $('messages').setAttribute('aria-busy', 'true');
+let detailBusy = false, detailRequest = null;
+function loadDetail(force = false, initial = false) {
+  const id = state.selected, deviceId = state.deviceId; if (!id) return Promise.resolve();
+  if (detailRequest && detailRequest.seq === state.detailSeq && detailRequest.id === id && detailRequest.deviceId === deviceId) {
+    // Continuous change events must not invalidate a slower, useful response.
+    detailRequest.refresh ||= force; detailRequest.initial ||= initial;
+    return detailRequest.promise;
+  }
+  const request = detailRequest = { id, deviceId, seq: ++state.detailSeq, refresh: false, initial };
+  detailBusy = true;
+  request.promise = readDetail(request, force);
+  return request.promise;
+}
+async function readDetail(request, force) {
+  const { id, deviceId, seq } = request;
+  if (request.initial) $('messages').setAttribute('aria-busy', 'true');
   try {
     const data = await deviceApi(`/threads/${id}?limit=15${force ? '&refresh=1' : ''}`, undefined, deviceId);
     if (seq !== state.detailSeq || id !== state.selected || deviceId !== state.deviceId) return;
@@ -330,15 +383,21 @@ async function loadDetail(force = false, initial = false) {
       if (tailStart <= old.total) { data.messages = [...old.messages.slice(0, Math.max(0, tailStart - oldStart)), ...data.messages]; data.before = oldStart || null; }
     }
     const changed = !old || JSON.stringify(old.messages) !== JSON.stringify(data.messages);
-    state.detail = data; updateStatus(data); $('chat-title').textContent = data.thread.title; $('chat-project').textContent = `${project(data.thread)}${data.thread.model ? ` · ${data.thread.model}` : ''}`;
+    state.detail = data; updateStatus(data); $('chat-title').textContent = data.thread.title; $('chat-project').textContent = project(data.thread);
     const cached = !data.online || data.refreshError;
     $('cache-banner').hidden = !cached; $('cache-banner').textContent = data.refreshError || `电脑已离线。正在显示 ${date(data.syncedAt, true)} 的缓存记录。`;
-    if (changed || initial) renderMessages(initial); if (initial) renderModels(); updateComposer(); renderTask(); markResultRead();
+    if (changed || request.initial) renderMessages(request.initial); renderModels(); renderFamily(); updateComposer(); renderTask(); markResultRead();
   } catch (error) {
     if (seq !== state.detailSeq || id !== state.selected || deviceId !== state.deviceId) return;
     if (!state.detail) { const empty = el('div', 'list-empty'); const retry = el('button', 'secondary', '重新读取'); retry.onclick = () => loadDetail(true, true); empty.append(el('p', '', error.message), retry); $('messages').replaceChildren(empty); }
     else { $('cache-banner').hidden = false; $('cache-banner').textContent = `刷新失败：${error.message}`; }
-  } finally { if (seq === state.detailSeq) { detailBusy = false; $('messages').setAttribute('aria-busy', 'false'); } }
+  } finally {
+    if (detailRequest === request) detailRequest = null;
+    if (seq === state.detailSeq && id === state.selected && deviceId === state.deviceId) {
+      detailBusy = false; $('messages').setAttribute('aria-busy', 'false');
+      if (request.refresh) void loadDetail(true);
+    }
+  }
 }
 function renderMessages(initial = false, prepended = false) {
   const box = $('messages'), beforeHeight = box.scrollHeight, beforeTop = box.scrollTop, nearBottom = beforeHeight - beforeTop - box.clientHeight < 120;
@@ -348,7 +407,7 @@ function renderMessages(initial = false, prepended = false) {
     if (message.role !== 'user' && !(message.role === 'assistant' && message.phase === 'final_answer')) continue;
     const article = el('article', `message ${message.role}`), meta = el('div', 'message-meta'), body = el('div', 'message-body');
     article.setAttribute('aria-label', message.role === 'user' ? '你的消息' : 'Codex 回复');
-    meta.append(el('span', 'message-role', message.role === 'user' ? '你 · 发送' : 'Codex · 回复'), el('time', 'message-time', date(message.time, true)));
+    meta.append(el('span', 'message-role', message.role === 'user' ? childReadOnly() ? '任务 · 指令' : '你 · 发送' : childReadOnly() ? '子 Agent · 回复' : 'Codex · 回复'), el('time', 'message-time', date(message.time, true)));
     if (message.role === 'assistant') {
       body.innerHTML = DOMPurify.sanitize(marked.parse(message.text || '', { breaks: true }), { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'picture', 'video', 'audio', 'source', 'iframe', 'style', 'form', 'input', 'button', 'textarea'], FORBID_ATTR: ['style', 'src', 'srcset', 'id', 'name'] });
       body.querySelectorAll('a').forEach(a => { if (!/^https?:\/\//i.test(a.getAttribute('href') || '')) { a.removeAttribute('href'); } else { a.target = '_blank'; a.rel = 'noopener noreferrer'; } });
@@ -390,7 +449,7 @@ window.addEventListener('resize', updateViewport);
 window.visualViewport?.addEventListener('resize', updateViewport);
 updateViewport();
 function updateComposer() {
-  const d = state.detail, s = state.status, owned = s.activeTurns?.some(t => t.threadId === state.selected), sending = state.sending.has(selectedKey());
+  const d = state.detail, s = state.status, owned = d?.execution?.verified ? d.execution.state === 'running' && Boolean(d.execution.turnId) : s.activeTurns?.some(t => t.threadId === state.selected), sending = state.sending.has(selectedKey());
   const staleRunning = Boolean(d?.running && s.online && !owned &&
     (d.runningStale || d.refreshError || (d.fromCache && Date.now() - Number(d.syncedAt || 0) > 4000)));
   if (staleRunning && !runningRefreshTimer && Date.now() - runningRefreshAt > 5000) {
@@ -404,11 +463,13 @@ function updateComposer() {
   const attachmentIds = PhoneAttachments.ids();
   const entries = readPendingEntries(state.selected), duplicate = entries.some(p => typeof p.submitted === 'string' &&
     PhoneAttachments.identity(p.submitted, p.attachmentIds) === PhoneAttachments.identity($('message').value, attachmentIds));
-  let reason = !PhoneAccounts.active() ? '套餐已到期，请在账户页查看续期说明；草稿可以继续写' : !d ? '正在读取会话' : !s.online ? '电脑离线，联网后才能发送；草稿可以继续写' : !s.controls ? '当前为只读模式' : d.thread.archived ? '已归档，请先在桌面恢复会话' : !d.thread.local ? '此会话不在本机，只能查看' : sending ? '正在提交…' : duplicate ? '相同消息结果待确认，先核对，避免重复执行' : '';
+  const child = childReadOnly();
+  $('composer-wrap').hidden = child; $('child-readonly').hidden = !child;
+  let reason = child ? '子对话当前仅支持查看，请返回主对话发送指令' : !PhoneAccounts.active() ? '套餐已到期，请在账户页查看续期说明；草稿可以继续写' : !d ? '正在读取会话' : !s.online ? '电脑离线，联网后才能发送；草稿可以继续写' : !s.controls ? '当前为只读模式' : d.thread.archived ? '已归档，请先在桌面恢复会话' : !d.thread.local ? '此会话不在本机，只能查看' : sending ? '正在提交…' : duplicate ? '相同消息结果待确认，先核对，避免重复执行' : '';
   // A running/unknown/offline turn must never prevent writing the next draft.
   // Submission is checked separately so drafting does not imply permission to execute.
-  $('message').disabled = !state.selected;
-  $('send-button').disabled = Boolean(reason || (!$('message').value.trim() && !attachmentIds.length) || PhoneAttachments.blocked()); $('stop-button').hidden = !owned; $('stop-button').disabled = !s.online || !s.controls;
+  $('message').disabled = !state.selected || child;
+  $('send-button').disabled = Boolean(reason || (!$('message').value.trim() && !attachmentIds.length) || PhoneAttachments.blocked()); $('stop-button').hidden = child || !owned; $('stop-button').disabled = child || !s.online || !s.controls;
   PhoneAttachments.render();
   $('send-mode').querySelector('[value="steer"]').disabled = !owned;
   if (!owned && $('send-mode').value === 'steer') $('send-mode').value = 'auto';
@@ -419,12 +480,14 @@ function updateComposer() {
   $('composer-status').hidden = !reason && !entries.length;
   if (reason || entries.length) $('composer-status').append(el('span', '', reason || `${entries.length} 条提交待核对，仍可发送不同的新消息。`));
   if (state.pending) { const b = el('button', 'text-button', '核对发送状态'); b.type = 'button'; b.onclick = async () => { const key = selectedKey(); await checkPending(); if (key === selectedKey() && state.pending && confirm('请先刷新并核对聊天记录。解除保护后再次发送，可能重复执行尚未确认的指令。已确认上一条的执行情况？')) { clearPending(); updateComposer(); } }; $('composer-status').append(b); }
-  $('chat-badge').textContent = owned ? '执行中' : d?.running ? '待核对' : d?.thread.archived ? '已归档' : '会话'; $('chat-badge').classList.toggle('running', !!owned);
+  const taskLabels = { completed: '已完成', failed: '执行失败', interrupted: '已中断', idle: '空闲', unconfirmed: '待核对' };
+  $('chat-badge').textContent = owned ? '执行中' : d?.thread.archived ? '已归档' : taskLabels[d?.execution?.state] || (d?.running ? '待核对' : '会话'); $('chat-badge').classList.toggle('running', !!owned);
   resizeComposer();
 }
 function renderApprovals() {
   const deviceId = state.deviceId, connectionId = state.status.connectionId, seq = state.deviceSeq;
   const approvals = (state.status.approvals || []).filter(p => p.threadId === state.selected); const panel = $('approval-panel'); panel.hidden = !approvals.length; panel.replaceChildren();
+  if (childReadOnly()) { panel.hidden = true; return; }
   for (const p of approvals) { const item = el('div'); item.append(el('strong', '', p.type === 'command' ? 'Codex 请求执行命令' : 'Codex 请求修改文件'), el('p', '', p.reason)); if (p.command || p.cwd) item.append(el('pre', '', [p.command, p.cwd].filter(Boolean).join('\n')));
     const buttons = el('div', 'approval-buttons'); for (const [decision, label] of [['accept', '允许本次'], ['decline', '拒绝'], ['cancel', '取消任务']]) { const b = el('button', decision === 'accept' ? 'primary' : 'secondary', label); b.disabled = !state.status.online || !state.status.controls; b.onclick = async () => {
       if (deviceId !== state.deviceId || seq !== state.deviceSeq) return;
@@ -502,6 +565,10 @@ $('composer').addEventListener('submit', async event => {
   try { const result = await deviceApi(`/threads/${id}/send`, { text, requestId, attachmentIds, ...options }, deviceId);
     if (result.state === 'accepted') {
       clearPending(id, deviceId, requestId);
+      if (result.result?.delivery === 'started' && result.result?.model) {
+        state.options.set(key, {});
+        try { localStorage.removeItem(`codex-phone-model:${key}`); } catch {}
+      }
       PhoneAttachments.accepted(id, deviceId, attachmentIds);
       if (state.drafts.get(key) === submitted) state.drafts.delete(key);
       if (id === state.selected && deviceId === state.deviceId) { if ($('message').value === submitted) $('message').value = ''; await loadDetail(true); }
@@ -532,7 +599,7 @@ document.addEventListener('click', async event => {
       case 'copy-pair': await navigator.clipboard.writeText($('pair-code').textContent); notice('配对码已复制'); break;
       case 'status': renderStatus(); $('status-dialog').showModal(); break;
       case 'account': PhoneAccounts.show(); break;
-      case 'composer-settings': updateModelControls(); $('composer-settings-dialog').showModal(); break;
+      case 'composer-settings': updateModelControls(); $('composer-settings-dialog').showModal(); void loadModels(); break;
       case 'refresh': button.disabled = true; await loadList(); if (state.selected) await loadDetail(true); notice('已刷新'); break;
       case 'logout': await api('/api/logout', {}); history.replaceState(null, '', location.pathname); showLogin(); break;
       case 'stop': {
@@ -543,7 +610,10 @@ document.addEventListener('click', async event => {
     }
   } catch (error) { notice(error.message); } finally { button.disabled = false; }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && state.csrf) { loadList(); if (state.selected) loadDetail(true); } });
+function resumeSync() { if (state.csrf) { void loadList(); if (state.selected) void loadDetail(true); void loadModels(); } }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeSync(); });
+window.addEventListener('online', resumeSync);
 PhoneAccounts.mount({ api, el, notice, enterApp, showLogin, updateComposer, getState: () => state });
 const invited = PhoneAccounts.prepareInvite();
-api('/api/session').then(session => !invited && session.authenticated ? enterApp(session) : showLogin()).catch(() => { showLogin(); $('login-error').textContent = '暂时无法连接服务器，请刷新重试。'; $('login-error').hidden = false; });
+const bootstrapEpoch = sessionEpoch;
+api('/api/session').then(session => { if (bootstrapEpoch !== sessionEpoch) return; return !invited && session.authenticated ? enterApp(session) : showLogin(); }).catch(() => { if (bootstrapEpoch !== sessionEpoch) return; showLogin(); $('login-error').textContent = '暂时无法连接服务器，请刷新重试。'; $('login-error').hidden = false; });

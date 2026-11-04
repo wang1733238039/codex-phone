@@ -92,12 +92,20 @@ try {
   assert.equal(await page.locator('#approval-panel button:enabled').count(), 0);
   await page.evaluate(() => updateStatus({ controls: true, activeTurns: [], approvals: [] }));
   await page.route('**/commands/*', route => route.fulfill({ json: { state: 'not_found' } }));
+  let forcedTranscriptRefreshes = 0;
+  await page.route('**/api/devices/*/threads/*', async route => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === 'GET' && url.searchParams.get('refresh') === '1') forcedTranscriptRefreshes++;
+    await route.continue();
+  });
   await page.evaluate(async () => { state.pending = { id: uuid(), submitted: 'Uncertain command' }; await checkPending(); });
   assert.equal(await page.evaluate(() => Boolean(state.pending)), true);
+  assert.ok(forcedTranscriptRefreshes > 0, 'unknown command receipts force a fresh desktop transcript read');
+  assert.match(await page.locator('#delivery-status').textContent(), /发送回执仍未确认|电脑历史刷新失败/);
   assert.equal(await page.locator('#send-button').isDisabled(), true);
   assert.deepEqual(errors, []);
   const report = { passed: true, verifiedAt: new Date().toISOString(), simulatedComputers: 2,
-    checked: ['device-menu', 'device-menu-focus-retention', 'pair-code', 'same-thread-id', 'independent-drafts', 'send-completes-after-device-switch', 'late-detail-ignored', 'refresh-keeps-device', 'offline-cache', 'old-link-primary-only', 'read-only-stop-approval-disabled', 'unknown-command-keeps-send-protection', '375-390-1440-no-overflow'], pageErrors: errors };
+    checked: ['device-menu', 'device-menu-focus-retention', 'pair-code', 'same-thread-id', 'independent-drafts', 'send-completes-after-device-switch', 'late-detail-ignored', 'refresh-keeps-device', 'offline-cache', 'old-link-primary-only', 'read-only-stop-approval-disabled', 'unknown-command-forces-desktop-transcript-refresh-without-clearing-send-protection', '375-390-1440-no-overflow'], pageErrors: errors };
   writeFileSync(join(artifacts, 'browser-report.json'), JSON.stringify(report, null, 2) + '\n', 'utf8'); console.log(JSON.stringify(report));
 } catch (e) { await page.screenshot({ path: join(artifacts, 'browser-failure.png') }); console.error(JSON.stringify({ errors, messages: await page.locator('#messages').innerText() })); throw e; }
 finally { for (const respond of held.splice(0)) { try { respond(); } catch {} } await browser.close(); for (const ws of agents) ws.terminate(); await app.close(); rmSync(dir, { recursive: true, force: true }); }

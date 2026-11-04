@@ -68,6 +68,29 @@ test('creating a thread is authenticated, capability gated, idempotent, persiste
   assert.equal((await f.request(`/api/devices/${randomUUID()}/threads`, { requestId, title: '' })).status, 404);
 });
 
+test('child creation and sends use their exact parent/device, are idempotent, and reject missing parents', async t => {
+  const f = await fixture(t); await f.login(); const ws = await f.connect();
+  const parentId = randomUUID(), id = randomUUID(), requestId = randomUUID(), calls = [];
+  ws.send(JSON.stringify({ type: 'snapshot', threads: [{ id: parentId, local: true, archived: false }], info: { controls: true, capabilities: { createThread: true, childControls: true } } }));
+  await until(() => f.app.status().capabilities.childControls);
+  ws.on('message', raw => {
+    const msg = JSON.parse(raw); if (msg.type !== 'request') return; calls.push(msg);
+    ws.send(JSON.stringify({ type: 'response', id: msg.id, data: msg.action === 'create-thread'
+      ? { thread: { id, parentThreadId: parentId, rootThreadId: parentId, local: true, archived: false, readOnly: false } }
+      : { delivery: 'started' } }));
+  });
+  const create = { requestId, parentThreadId: parentId, title: '子对话' };
+  assert.equal((await f.request('/api/threads', { ...create, parentThreadId: randomUUID() })).status, 404);
+  assert.equal((await f.request('/api/threads', { ...create, rootPath: 'C:\\other' })).status, 400);
+  const result = await (await f.request('/api/threads', create)).json();
+  assert.equal(result.state, 'accepted'); assert.equal(result.result.thread.parentThreadId, parentId);
+  assert.equal((await (await f.request('/api/threads', create)).json()).duplicate, true);
+  assert.equal(calls.length, 1); assert.equal(calls[0].data.parentThreadId, parentId);
+  const send = await f.request(`/api/threads/${id}/send`, { text: '继续检查', requestId: randomUUID() });
+  assert.equal(send.status, 200); assert.equal(calls.at(-1).action, 'send'); assert.equal(calls.at(-1).data.threadId, id);
+  assert.equal((await (await f.request('/api/threads')).json()).threads.length, 1);
+});
+
 test('login, session cookies, CSRF, host and origin checks', async t => {
   const f = await fixture(t);
   const stylesheet = await fetch(f.origin + '/conversation.css');
@@ -138,6 +161,43 @@ test('old unclassified cache is invalidated and refreshed before pagination', as
   assert.equal((await (await f.request(`/api/threads/${id}`)).json()).messages.length, 2);
 });
 
+test('child families are separate from the sidebar, cached offline, and read-only on every control route', async t => {
+  const f = await fixture(t); await f.login(); const ws = await f.connect();
+  const rootId = randomUUID(), childId = randomUUID(), unrelated = randomUUID();
+  const root = { id: rootId, title: '主对话', local: true, archived: false };
+  const child = { id: childId, title: '子对话', parentThreadId: rootId, local: true, archived: false };
+  let forwarded = 0;
+  ws.on('message', raw => {
+    const msg = JSON.parse(raw); if (msg.type !== 'request') return; forwarded++;
+    assert.equal(msg.action, 'detail');
+    ws.send(JSON.stringify({ type: 'response', id: msg.id, data: { id: childId, readOnly: true, transcriptVersion: TRANSCRIPT_VERSION, messages: [
+      { role: 'assistant', phase: 'commentary', text: 'hidden progress' },
+      { role: 'assistant', phase: 'final_answer', text: '子对话结果' },
+    ] } }));
+  });
+  ws.send(JSON.stringify({ type: 'snapshot', threads: [root], childThreads: [child, { id: randomUUID(), parentThreadId: unrelated }],
+    info: { controls: true }, activeTurns: [{ threadId: childId, turnId: 'turn' }], approvals: [{ id: 'child-approval', threadId: childId }] }));
+  await until(() => f.app.store.thread(childId));
+  const listing = await (await f.request('/api/threads')).json();
+  assert.deepEqual(listing.threads.map(t => t.id), [rootId]); assert.equal(listing.total, 1); assert.equal(listing.threads[0].childCount, 1);
+  const family = await (await f.request(`/api/threads/${childId}/family`)).json();
+  assert.equal(family.rootId, rootId); assert.equal(family.threads.length, 2);
+  assert.equal((await f.request(`/api/threads/${unrelated}/family`)).status, 404);
+  const detail = await (await f.request(`/api/threads/${childId}`)).json();
+  assert.deepEqual(detail.messages.map(m => m.text), ['子对话结果']);
+  assert.equal(detail.thread.readOnly, true); assert.equal(forwarded, 1);
+  for (const action of ['send', 'stop', 'queue-start', 'queue-delete']) {
+    assert.equal((await f.request(`/api/threads/${childId}/${action}`, { text: 'test', requestId: randomUUID(), queueId: 'q' })).status, 403);
+  }
+  assert.equal((await f.request(`/api/threads/${childId}/attachments`, { name: 'test.txt', size: 1 })).status, 403);
+  assert.equal((await f.request('/api/approve', { id: 'child-approval', decision: 'accept' })).status, 403);
+  assert.equal(forwarded, 1);
+  ws.close(); await until(() => !f.app.status().online);
+  assert.equal((await (await f.request(`/api/threads/${childId}/family`)).json()).online, false);
+  assert.equal((await (await f.request(`/api/threads/${childId}`)).json()).fromCache, true);
+  assert.equal((await f.request(`/api/devices/${randomUUID()}/threads/${childId}/family`)).status, 404);
+});
+
 test('uncertain Codex response is recorded once and cannot be replayed', async t => {
   const f = await fixture(t); await f.login(); const ws = await f.connect(); const id = randomUUID(), requestId = randomUUID(); let sends = 0;
   ws.send(JSON.stringify({ type: 'snapshot', threads: [{ id, archived: false }] })); await until(() => f.app.store.list().length);
@@ -145,6 +205,20 @@ test('uncertain Codex response is recorded once and cannot be replayed', async t
   assert.equal((await f.request(`/api/threads/${id}/send`, { requestId, text: 'test' })).status, 504);
   assert.equal((await (await f.request(`/api/commands/${requestId}`)).json()).state, 'unknown');
   await f.request(`/api/threads/${id}/send`, { requestId, text: 'test' }); assert.equal(sends, 1);
+});
+
+test('commands interrupted by relay restart reconcile from pending to unknown on device reconnect', async t => {
+  const f = await fixture(t); await f.login();
+  const id = randomUUID(), requestId = randomUUID();
+  const ws = await f.connect();
+  ws.send(JSON.stringify({ type: 'snapshot', threads: [{ id, archived: false }] }));
+  await until(() => f.app.store.list().length);
+  f.app.store.beginCommand(f.app.store.primaryDeviceId, requestId, id);
+  assert.equal((await (await f.request(`/api/commands/${requestId}`)).json()).state, 'pending');
+  ws.close(); await until(() => !f.app.status().online);
+  const reconnected = await f.connect();
+  assert.equal((await (await f.request(`/api/commands/${requestId}`)).json()).state, 'unknown');
+  reconnected.close();
 });
 
 test('a late accepted response repairs an unknown receipt without sending the message again', async t => {

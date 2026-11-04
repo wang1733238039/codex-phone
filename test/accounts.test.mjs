@@ -218,7 +218,7 @@ test('two users with two computers each cannot access another owner through any 
   assert.equal((await f.admin.json('/api/devices')).devices.length, 1);
   assert.equal((await a.json(own + `/threads/${id}`)).messages[0].text, '用户A电脑1的输入');
   assert.equal((await b.json(other + `/threads/${id}`)).messages[0].text, '用户B电脑1的输入');
-  for (const route of ['/status', '/models', '/threads', `/threads/${id}`, '/events', `/commands/${requestId}`]) {
+  for (const route of ['/status', '/models', '/threads', `/threads/${id}`, `/threads/${id}/family`, '/events', `/commands/${requestId}`]) {
     assert.equal((await a.request(other + route)).status, 404, route);
     assert.equal((await f.admin.request(other + route)).status, 404, `admin ${route}`);
   }
@@ -234,6 +234,23 @@ test('two users with two computers each cannot access another owner through any 
   assert.equal(ab.requests.length, 0); assert.equal(bb.requests.length, 0);
   assert.equal(await f.rejected(db.agentToken, da.deviceId), 401);
   assert.equal(f.app.store.ownerId, 'personal');
+});
+
+test('child family metadata and details stay private even with matching IDs on another account or device', async t => {
+  const f = await fixture(t), a = await f.member('family-a'), b = await f.member('family-b');
+  const da = await f.pair(a), da2 = await f.pair(a), db = await f.pair(b), id = randomUUID(), childId = randomUUID();
+  await f.connect(da, 'A', id); await f.connect(da2, 'A2', id); await f.connect(db, 'B', id);
+  const storeA = f.app.store.forOwner(a.id), storeB = f.app.store.forOwner(b.id);
+  storeA.snapshot([{ id, title: 'A主对话', archived: false }], null, da.deviceId, [{ id: childId, title: 'A子对话', parentThreadId: id }]);
+  storeB.snapshot([{ id, title: 'B主对话', archived: false }], null, db.deviceId, [{ id: childId, title: 'B子对话', parentThreadId: id }]);
+  const path = d => `/api/devices/${d.deviceId}/threads/${childId}`;
+  assert.equal((await a.json(path(da) + '/family')).threads[1].title, 'A子对话');
+  assert.equal((await b.json(path(db) + '/family')).threads[1].title, 'B子对话');
+  for (const suffix of ['', '/family']) {
+    assert.equal((await a.request(path(db) + suffix)).status, 404);
+    assert.equal((await f.admin.request(path(da) + suffix)).status, 404);
+    assert.equal((await a.request(path(da2) + suffix)).status, 404);
+  }
 });
 
 test('directory and thread events never cross accounts; a foreign connection cannot spoof a response', async t => {

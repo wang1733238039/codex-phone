@@ -181,6 +181,8 @@ export function createApp(config) {
     ['/', ['public/index.html', 'text/html; charset=utf-8']],
     ['/app.js', ['public/app.js', 'text/javascript; charset=utf-8']],
     ['/inbox.js', ['public/inbox.js', 'text/javascript; charset=utf-8']],
+    ['/children.js', ['public/children.js', 'text/javascript; charset=utf-8']],
+    ['/children.css', ['public/children.css', 'text/css; charset=utf-8']],
     ['/attachments.js', ['public/attachments.js', 'text/javascript; charset=utf-8']],
     ['/accounts.js', ['public/accounts.js', 'text/javascript; charset=utf-8']],
     ['/accounts.css', ['public/accounts.css', 'text/css; charset=utf-8']],
@@ -367,21 +369,33 @@ export function createApp(config) {
       if (req.method === 'POST' && route === '/api/threads') {
         if (!config.controlsEnabled || agents.get(deviceId)?.controls === false) throw new HttpError(403, '当前仅允许查看会话');
         const data = await body(req);
+        const parentId = data.parentThreadId;
+        const creationKey = parentId == null ? '__create__' : `__child__:${parentId}`;
+        if (parentId != null) {
+          const parent = validThreadId(parentId) && store.thread(parentId, deviceId);
+          if (!parent) throw new HttpError(404, '找不到父对话');
+          if (parent.readOnly || parent.archived || parent.local !== true) throw new HttpError(403, '此父对话不可新建子对话');
+          if (!status(deviceId).capabilities.childControls) throw new HttpError(409, '请升级此电脑连接程序以操作子对话');
+          if (data.projectId || data.rootPath) throw new HttpError(400, '子对话继承父对话项目和目录');
+        }
         if (!validThreadId(data.requestId) || typeof data.title !== 'string' || data.title.length > 120 ||
             data.projectId != null && (typeof data.projectId !== 'string' || data.projectId.length > 200) ||
             data.rootPath != null && (typeof data.rootPath !== 'string' || data.rootPath.length > 4096)) throw new HttpError(400, '新建对话参数无效');
         const previous = store.command(deviceId, data.requestId);
         if (previous) {
-          if (previous.thread_id !== '__create__') throw new HttpError(409, '请求编号已使用');
+          if (previous.thread_id !== creationKey) throw new HttpError(409, '请求编号已使用');
           json(res, 200, { state: previous.state, result: previous.payload ? JSON.parse(previous.payload) : null, duplicate: true }); return;
         }
         if (!online(deviceId)) throw new HttpError(503, '电脑离线，无法新建对话');
         if (!status(deviceId).capabilities.createThread) throw new HttpError(409, '此电脑连接程序需升级至 0.5.0 才能新建对话');
         limit(pairingAttempts, `new-thread:${session.id}`, 20, 60000);
-        store.beginCommand(deviceId, data.requestId, '__create__');
+        store.beginCommand(deviceId, data.requestId, creationKey);
         const finish = message => {
           if (!message.error && !validThreadId(message.data?.thread?.id)) {
             message = { error: '电脑返回的新建结果无效，请刷新列表核对', uncertain: true };
+          }
+          if (!message.error && parentId && message.data.thread.parentThreadId !== parentId) {
+            message = { error: '新建子对话关系尚未确认，请刷新核对', uncertain: true };
           }
           store.finishCommand(deviceId, data.requestId, message.error ? message.uncertain ? 'unknown' : 'failed' : 'accepted',
             message.error ? { error: message.error } : message.data);
@@ -392,7 +406,7 @@ export function createApp(config) {
           }
         };
         try {
-          const result = await ask(deviceId, 'create-thread', { title: data.title, projectId: data.projectId, rootPath: data.rootPath }, config.commandTimeoutMs || 60000, finish);
+          const result = await ask(deviceId, 'create-thread', { title: data.title, projectId: data.projectId, rootPath: data.rootPath, ...(parentId ? { parentThreadId: parentId } : {}) }, config.commandTimeoutMs || 60000, finish);
           finish({ data: result });
           const saved = store.command(deviceId, data.requestId);
           json(res, 200, { state: saved.state, result: JSON.parse(saved.payload) });
@@ -405,10 +419,16 @@ export function createApp(config) {
       if (req.method === 'GET' && route === '/api/threads') {
         const q = (url.searchParams.get('q') || '').trim().toLocaleLowerCase();
         const archived = url.searchParams.get('archived') === 'true';
-        const all = store.list(deviceId), sidebar = store.sidebar(deviceId);
+        const all = store.list(deviceId).filter(t => !t.parentThreadId), sidebar = store.sidebar(deviceId);
         const threads = all.filter(t => t.archived === archived && (!q || `${t.title}\n${t.preview}\n${t.cwd}\n${t.projectName || ''}`.toLocaleLowerCase().includes(q)))
           .sort((a, b) => compareThreads(a, b, sidebar));
         json(res, 200, { threads, sidebar, groups: sidebarGroups(threads, sidebar, { archived, searching: Boolean(q) }), total: all.filter(t => !t.archived).length, archivedCount: all.filter(t => t.archived).length, ...status(deviceId) }); return;
+      }
+      const familyId = route.match(/^\/api\/threads\/([a-f\d-]+)\/family$/i)?.[1];
+      if (req.method === 'GET' && familyId) {
+        const family = validThreadId(familyId) && store.family(familyId, deviceId);
+        if (!family) throw new HttpError(404, '找不到此会话');
+        json(res, 200, { ...family, ...status(deviceId) }); return;
       }
       const attachmentRoute = route.match(/^\/api\/threads\/([a-f\d-]+)\/attachments(?:\/([a-f\d-]+)(?:\/(complete|sync|content))?)?$/i);
       if (attachmentRoute) {
@@ -418,6 +438,7 @@ export function createApp(config) {
           if (action === 'content') { await attachments.content(deviceId, threadId, attachmentId, req, res, headers); return; }
           if (!action) { json(res, 200, attachments.public(attachments.get(deviceId, threadId, attachmentId))); return; }
         }
+        if (thread.readOnly) throw new HttpError(403, '子对话当前仅支持查看，请返回主对话发送指令');
         if (!config.controlsEnabled || agents.get(deviceId)?.controls === false || thread.archived || thread.local === false) throw new HttpError(403, '此会话当前不能上传材料');
         if (req.method === 'DELETE' && attachmentId && !action) { json(res, 200, await attachments.remove(deviceId, threadId, attachmentId)); return; }
         if (!online(deviceId)) throw new HttpError(503, '电脑离线，请上线后上传或重试');
@@ -457,6 +478,7 @@ export function createApp(config) {
             refreshError, runningStale, thread: store.thread(id, deviceId), ...status(deviceId) }); return;
         }
         if (req.method === 'POST' && action) {
+          if (store.thread(id, deviceId).readOnly) throw new HttpError(403, '子对话当前仅支持查看，请返回主对话发送指令');
           if (!config.controlsEnabled || agents.get(deviceId)?.controls === false) throw new HttpError(403, '当前仅允许查看会话');
           const data = await body(req);
           if (action === 'queue-delete') {
@@ -507,6 +529,7 @@ export function createApp(config) {
         if (typeof data.id !== 'string' || !['accept', 'decline', 'cancel'].includes(data.decision)) throw new HttpError(400, '审批参数无效');
         const approval = status(deviceId).approvals.find(p => p.id === data.id);
         if (!approval || (deviceRoute && (data.connectionId !== status(deviceId).connectionId || data.threadId !== approval.threadId))) throw new HttpError(409, '审批状态已更新，请刷新后重试');
+        if (store.thread(approval.threadId, deviceId)?.readOnly) throw new HttpError(403, '子对话当前仅支持查看');
         json(res, 200, await ask(deviceId, 'approve', { ...data, threadId: approval.threadId })); return;
       }
       throw new HttpError(404, '找不到此页面');
@@ -526,6 +549,11 @@ export function createApp(config) {
     const deviceId = identity.id, ownerId = identity.owner_id, store = rootStore.forOwner(ownerId), previous = agents.get(deviceId);
     if (previous && online(deviceId)) { socket.end('HTTP/1.1 409 Conflict\r\nConnection: close\r\n\r\n'); return; }
     if (previous) { disconnect(previous); previous.ws.terminate(); }
+      // A command can remain pending if the browser disconnects while this
+      // relay is down. It cannot be assumed unexecuted; reconcile it as
+      // unknown when this device reconnects so clients refresh its transcript.
+      store.db.prepare("UPDATE commands SET state='unknown',payload=? WHERE owner_id=? AND device_id=? AND state='pending'")
+        .run(JSON.stringify({ error: '电脑已重新连接；此前命令结果需要从会话记录核对' }), ownerId, deviceId);
     wss.handleUpgrade(req, socket, head, ws => {
       const connection = { id: randomUUID(), ownerId, deviceId, ws, lastSeen: Date.now(), activeTurns: [], approvals: [] };
       agents.set(deviceId, connection);
@@ -537,8 +565,9 @@ export function createApp(config) {
         if (!store.device(deviceId) || accounts.access(accounts.get(ownerId)) !== 'active') { disconnect(connection); ws.terminate(); return; }
         try {
           const msg = JSON.parse(raw.toString()); connection.lastSeen = Date.now();
-          if (msg.type === 'snapshot' && Array.isArray(msg.threads) && msg.threads.length < 50000 && msg.threads.every(t => validThreadId(t.id))) {
-            store.snapshot(msg.threads, msg.sidebar, deviceId); store.computerName(deviceId, msg.info?.computer);
+          if (msg.type === 'snapshot' && Array.isArray(msg.threads) && msg.threads.length < 50000 && msg.threads.every(t => validThreadId(t.id)) &&
+              (msg.childThreads === undefined || Array.isArray(msg.childThreads) && msg.threads.length + msg.childThreads.length < 50000 && msg.childThreads.every(t => validThreadId(t.id)))) {
+            store.snapshot(msg.threads, msg.sidebar, deviceId, (msg.childThreads || []).map(t => ({ ...t, readOnly: t.readOnly === true || !msg.info?.capabilities?.childControls }))); store.computerName(deviceId, msg.info?.computer);
             connection.controls = msg.info?.controls;
             connection.capabilities = msg.info?.capabilities || {}; connection.version = msg.info?.version || null;
             connection.activeTurns = Array.isArray(msg.activeTurns) ? msg.activeTurns : [];

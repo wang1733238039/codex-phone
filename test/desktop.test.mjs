@@ -51,6 +51,16 @@ test('a desktop write timeout stays uncertain and is never reclassified as a saf
   f.ipc.command = async () => { throw new Error('owner gone before write'); };
   await assert.rejects(f.bridge.send(id, {}, [], {}, f.state), error => error.uncertain === false);
 });
+test('desktop model selection also updates inherited collaboration settings without losing permissions', async () => {
+  const f = fixture(); f.state.turns[0].status = 'failed';
+  f.state.latestThreadSettings.collaborationMode = { mode: 'default', settings: { model: 'old-model', reasoning_effort: 'high', developer_instructions: 'keep' } };
+  await f.bridge.send(id, { requestId: 'model-change' }, [], { model: 'new-model', effort: 'xhigh' }, f.state);
+  const request = f.calls[0].params.turnStart.request;
+  assert.equal(request.model, 'new-model');
+  assert.deepEqual(request.collaborationMode, { mode: 'default', settings: { model: 'new-model', reasoning_effort: 'xhigh', developer_instructions: 'keep' } });
+  assert.equal(f.state.latestThreadSettings.collaborationMode.settings.model, 'old-model');
+  assert.equal(f.calls[0].params.turnStart.context.inheritThreadSettings, true);
+});
 test('stopping a desktop task requires a fresh matching turn', async () => {
   const f = fixture();
   await assert.rejects(f.bridge.stop(id, 'stale'), /轮次/);
@@ -72,12 +82,18 @@ test('desktop approvals reject a foreign thread and a request changed during rev
   await assert.rejects(f.bridge.approve(approvalId, id, 'accept'), /变化/);
   assert.equal(f.calls.length, 0);
 });
+test('desktop rejects direct input when the native child explicitly disallows it', async () => {
+  const f = fixture(); f.state.canAcceptDirectInput = false;
+  await assert.rejects(f.bridge.send(id, { text: 'continue' }, [{ type: 'text', text: 'continue' }], {}, f.state), /不接受/);
+  assert.equal(f.calls.length, 0);
+});
 test('agent never starts a parallel CLI task after an uncertain desktop send', async () => {
   const f = fixture(); f.state.turns[0].status = 'completed';
   let cliStarts = 0;
   f.ipc.command = async (_id, _method, _params, before) => { before(); throw new Error('lost response'); };
   const agent = { config: { controlsEnabled: true }, active: new Map(), inflight: new Set(),
-    source: { row: () => ({ archived: false }), isLocal: () => true }, desktop: f.bridge,
+    assertControllable: Agent.prototype.assertControllable,
+    source: { row: () => ({ archived: false }), isLocal: () => true, isChild: () => false }, desktop: f.bridge,
     selection: async () => ({}), inputs: async () => [{ type: 'text', text: 'one' }],
     codex: { start: async () => { cliStarts++; } }, releaseWhenIdle() {} };
   await assert.rejects(Agent.prototype.handle.call(agent, 'send', { threadId: id, text: 'one', requestId: 'one' }),
@@ -93,6 +109,20 @@ test('a slow runtime status lookup cannot block already-read conversation replie
   assert.equal(result.messages[0].text, '已完成的回复');
   assert.equal(result.execution.verified, false);
   assert.match(result.execution.statusError, /运行状态超时/);
+});
+test('overlapping transcript reads share a slow status lookup and publish a late status without hiding replies', async () => {
+  let complete, lookups=0, notifications=0;
+  const detail={id,messages:[{role:'assistant',phase:'final_answer',text:'visible reply'}],turnStatus:'completed'};
+  const agent={config:{controlsEnabled:true,detailRuntimeTimeoutMs:100},active:new Map(),
+    source:{detail:async()=>detail},runtime:()=>{lookups++;return new Promise(resolve=>{complete=resolve;});},
+    friendlyError:error=>error.message,changed:()=>notifications++};
+  const results=await Promise.all([1,2,3].map(()=>Agent.prototype.handle.call(agent,'detail',{threadId:id})));
+  assert.equal(lookups,1);
+  assert.ok(results.every(result=>result.messages[0].text==='visible reply'));
+  complete({execution:{state:'completed',verified:true}});
+  await new Promise(resolve=>setImmediate(resolve));
+  const ready=await Agent.prototype.handle.call(agent,'detail',{threadId:id});
+  assert.equal(ready.execution.verified,true);assert.equal(lookups,1);assert.equal(notifications,1);
 });
 test('desktop controls recheck the turn immediately before the execution write', async () => {
   for (const mode of ['steer', 'stop', 'start']) {

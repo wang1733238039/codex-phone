@@ -1,10 +1,27 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
-const mutatingInput = method => ['thread/start', 'turn/start', 'turn/steer', 'thread/queue/add', 'thread/queue/start'].includes(method);
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { isAbsolute, join, resolve, sep } from 'node:path';
+const mutatingInput = method => ['thread/start', 'thread/fork', 'turn/start', 'turn/steer', 'thread/queue/add', 'thread/queue/start'].includes(method);
+
+export function resolveCodexBin(configured = 'codex', { platform = process.platform, localAppData = process.env.LOCALAPPDATA } = {}) {
+  if (platform !== 'win32' || !localAppData) return configured;
+  const root = join(localAppData, 'OpenAI', 'Codex', 'bin');
+  // Desktop updates replace the versioned binary folder. A background
+  // connector can retain yesterday's PATH after that folder is removed.
+  if (isAbsolute(configured) && existsSync(configured)) return configured;
+  if (configured !== 'codex' && configured !== 'codex.exe' &&
+      !(isAbsolute(configured) && resolve(configured).toLowerCase().startsWith(resolve(root).toLowerCase() + sep))) return configured;
+  try {
+    const candidates = readdirSync(root).map(name => join(root, name, 'codex.exe')).filter(existsSync);
+    candidates.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    return candidates[0] || configured;
+  } catch { return configured; }
+}
 
 export class CodexClient extends EventEmitter {
-  constructor(config) { super(); this.config = config; this.pending = new Map(); this.seq = 0; this.proc = null; }
+  constructor(config, spawnProcess = spawn) { super(); this.config = config; this.spawnProcess = spawnProcess; this.pending = new Map(); this.seq = 0; this.proc = null; }
   async start() {
     if (this.stopping) await this.stopping;
     if (this.ready) return this.ready;
@@ -12,15 +29,19 @@ export class CodexClient extends EventEmitter {
     return this.ready;
   }
   async boot() {
-    const proc = this.proc = spawn(this.config.codexBin || 'codex', ['app-server', '--stdio'], {
+    const proc = this.proc = this.spawnProcess(resolveCodexBin(this.config.codexBin), ['app-server', '--stdio'], {
       windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, CODEX_HOME: this.config.codexHome },
     });
     // Never forward raw stderr or environment to the web server.
     proc.stderr.on('data', () => {});
-    proc.stdin.on('error', error => this.fail(error));
-    proc.on('error', error => this.fail(error));
-    proc.on('exit', () => { this.fail(new Error('Codex process disconnected')); this.ready = null; this.proc = null; this.emit('disconnected'); });
+    proc.stdin.on('error', error => { if (this.proc === proc) this.fail(error); });
+    const disconnected = error => {
+      if (this.proc !== proc) return;
+      this.fail(error); this.ready = null; this.proc = null; this.emit('disconnected');
+    };
+    proc.on('error', disconnected);
+    proc.on('exit', () => disconnected(new Error('Codex process disconnected')));
     createInterface({ input: proc.stdout }).on('line', line => {
       let msg;
       try { msg = JSON.parse(line); } catch { return; }
@@ -30,8 +51,10 @@ export class CodexClient extends EventEmitter {
         if (msg.error) { const error = new Error(msg.error.message); error.code = msg.error.code; reject(error); } else resolve(msg.result);
       } else if (msg.method) this.emit('message', msg);
     });
-    await this.call('initialize', { clientInfo: { name: 'codex_phone', version: '0.5.0' }, capabilities: { experimentalApi: true } });
-    this.write({ method: 'initialized' });
+    try {
+      await this.call('initialize', { clientInfo: { name: 'codex_phone', version: '0.5.0' }, capabilities: { experimentalApi: true } }, 10000);
+      this.write({ method: 'initialized' });
+    } catch (error) { disconnected(error); proc.kill(); throw error; }
   }
   write(message) {
     if (!this.proc || this.proc.stdin.destroyed) throw new Error('Codex is offline');
@@ -56,6 +79,7 @@ export class CodexClient extends EventEmitter {
     const proc = this.proc;
     if (!proc || this.stopping) return;
     this.ready = null;
+    if (proc.closed) { this.proc = null; return; }
     this.stopping = new Promise(resolve => proc.once('close', resolve)).finally(() => { this.stopping = null; });
     proc.kill();
   }

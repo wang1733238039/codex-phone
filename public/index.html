@@ -9,6 +9,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/conversation.css">
+  <link rel="stylesheet" href="/children.css">
   <link rel="stylesheet" href="/accounts.css">
   <title>Codex 随行</title>
 </head>
@@ -84,7 +85,7 @@
       <section id="chat" class="chat" aria-label="聊天详情" hidden>
         <header class="chat-header">
           <button class="icon-button back-button" data-action="back" aria-label="返回会话列表"><svg viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></svg></button>
-          <div class="chat-heading"><button id="chat-device-button" class="chat-device" type="button" data-action="devices" aria-label="切换电脑" aria-haspopup="dialog"><span id="chat-device-name">选择电脑</span><svg aria-hidden="true"><use href="/device-icons.svg#chevron-down"/></svg></button><h2 id="chat-title"></h2><p id="chat-project"></p></div>
+          <div class="chat-heading"><button id="chat-device-button" class="chat-device" type="button" data-action="devices" aria-label="切换电脑" aria-haspopup="dialog"><span id="chat-device-name">选择电脑</span><svg aria-hidden="true"><use href="/device-icons.svg#chevron-down"/></svg></button><div class="chat-title-row"><h2 id="chat-title"></h2><button id="family-button" class="family-button" type="button" aria-haspopup="dialog" aria-controls="family-dialog" hidden><span id="family-button-label">子对话</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div><p id="chat-project"></p></div>
           <span id="chat-badge" class="badge">历史</span>
           <button class="icon-button" data-action="account" type="button" aria-label="账户与套餐" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></button>
         </header>
@@ -93,7 +94,8 @@
         <details id="queue-panel" class="queue-panel" hidden><summary id="queue-summary">待执行消息</summary><div id="queue-list"></div></details>
         <div id="messages" class="messages" tabindex="0" aria-label="聊天记录" aria-busy="false"></div>
         <div id="approval-panel" class="approval-panel" hidden></div>
-        <footer class="composer-wrap">
+        <div id="child-readonly" class="child-readonly" hidden><span>子对话 · 仅查看</span><button id="return-main-thread" class="secondary" type="button">返回主对话</button></div>
+        <footer id="composer-wrap" class="composer-wrap">
           <p id="composer-status" class="composer-status"></p>
           <p id="delivery-status" class="delivery-status" role="status" hidden></p>
           <form id="composer" class="composer">
@@ -114,6 +116,11 @@
     <nav class="mobile-nav" aria-label="主要导航"><button class="active" data-view="recent" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v13H9l-4 4V4Z"/><path d="M9 8h6m-6 4h4"/></svg><span>会话</span></button><button data-view="archived"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v12H4zM3 4h18v4H3zm7 8h4"/></svg><span>归档</span></button><button data-action="status"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span>连接</span></button></nav>
   </div>
 
+  <dialog id="family-dialog" class="family-dialog" aria-labelledby="family-title">
+    <form method="dialog" class="dialog-heading"><div><h2 id="family-title">切换对话</h2><p id="family-summary" class="family-summary"></p></div><button class="icon-button" aria-label="关闭对话切换"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
+    <nav id="family-list" class="family-list" aria-label="主对话与子对话"></nav>
+    <div class="family-note"><button id="create-child" class="secondary full" type="button">新建子对话</button><p>在当前对话下新建，继承上下文；进入子对话后可直接发送消息。</p><p id="child-create-status" role="status"></p></div>
+  </dialog>
   <dialog id="status-dialog"><form method="dialog" class="dialog-heading"><h2>连接信息</h2><button class="icon-button" aria-label="关闭连接信息">×</button></form><div id="status-detail"></div><p class="dialog-note">电脑需要保持开机并运行连接程序。离线时可查看已缓存的列表和历史。</p><button class="secondary full" data-action="account" type="button">账户与套餐</button><button class="text-button full" data-action="logout">退出登录</button></dialog>
   <dialog id="account-dialog" aria-labelledby="account-title">
     <form method="dialog" class="dialog-heading"><h2 id="account-title">账户与套餐</h2><button class="icon-button" aria-label="关闭账户与套餐"><svg aria-hidden="true"><use href="/device-icons.svg#x"/></svg></button></form>
@@ -239,6 +246,7 @@
   <script src="/vendor/purify.js" defer></script>
   <script src="/attachments.js" defer></script>
   <script src="/inbox.js" defer></script>
+  <script src="/children.js" defer></script>
   <script src="/accounts.js" defer></script>
   <script src="/app.js" defer></script>
 </body>

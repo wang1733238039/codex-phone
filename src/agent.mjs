@@ -34,7 +34,7 @@ export class Agent {
   state() { this.send({ type: 'state', activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
   snapshot() {
     try { this.send({ type: 'snapshot', ...this.source.snapshot(), info: { computer: this.config.computerName || hostname(), controls: Boolean(this.config.controlsEnabled),
-      version: '0.6.0', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true } },
+      version: '0.6.8', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true } },
       activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
     catch (error) { console.error('Local index unavailable:', error.message); }
   }
@@ -136,13 +136,31 @@ export class Agent {
     if (action === 'create-thread') return this.createThread(data);
     if (action === 'detail') {
       const detail = await this.source.detail(data.threadId);
+      if (detail.readOnly) return { ...detail, execution: { state: detail.running ? 'unconfirmed' : detail.turnStatus, verified: false, lastActivityAt: detail.lastActivityAt } };
       detail.ownedTurn = this.active.get(data.threadId) || null;
       if (!this.config.controlsEnabled) return detail;
-      const timeoutMs = Math.max(100, Number(this.config.detailRuntimeTimeoutMs) || 15000);
+      const timeoutMs = Math.max(100, Number(this.config.detailRuntimeTimeoutMs) || 1200);
+      this.detailRuntimeReads ||= new Map();
+      let read = this.detailRuntimeReads.get(data.threadId);
+      if (!read || read.finishedAt && Date.now() - read.finishedAt > 2000) {
+        read = { startedAt: Date.now(), finishedAt: 0, value: null };
+        this.detailRuntimeReads.set(data.threadId, read);
+        if (this.detailRuntimeReads.size > 24) {
+          for (const [key, previous] of this.detailRuntimeReads) {
+            if (previous.finishedAt && key !== data.threadId) { this.detailRuntimeReads.delete(key); break; }
+          }
+        }
+        read.promise = Promise.resolve().then(() => this.runtime(data.threadId, detail)).then(value => {
+          read.value = value; read.finishedAt = Date.now();
+          // Notify the page when a slow status read completes, without delaying text.
+          if (!this.stopped && read.finishedAt - read.startedAt > timeoutMs) this.changed?.(data.threadId);
+          return value;
+        }, error => { if (this.detailRuntimeReads.get(data.threadId) === read) this.detailRuntimeReads.delete(data.threadId); throw error; });
+      }
       let timer;
       try {
-        const runtime = await Promise.race([
-          this.runtime(data.threadId, detail),
+        const runtime = read.value || await Promise.race([
+          read.promise,
           new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('读取电脑运行状态超时')), timeoutMs); }),
         ]);
         return { ...detail, ...runtime };
@@ -156,6 +174,7 @@ export class Agent {
       } finally { clearTimeout(timer); }
     }
     if (action === 'models') return { models: await this.models() };
+    if (action !== 'approve' && validThreadId(data.threadId)) this.assertControllable(data.threadId);
     if (['attachment-start', 'attachment-chunk', 'attachment-finish'].includes(action)) {
       if (!this.config.controlsEnabled) throw new Error('电脑连接程序未开启操作权限');
       if (!validThreadId(data.threadId)) throw new Error('会话编号无效');
@@ -169,11 +188,13 @@ export class Agent {
       if (typeof data.id === 'string' && data.id.startsWith('desktop:')) {
         if (!validThreadId(data.threadId) || !['accept', 'decline', 'cancel'].includes(data.decision)) throw new Error('审批参数无效');
         const row = this.source.row(data.threadId);
+        this.assertControllable(data.threadId);
         if (row.archived || !this.source.isLocal(row)) throw new Error('原桌面审批目标不可用');
         return this.desktop.approve(data.id, data.threadId, data.decision);
       }
       const p = this.approvals.get(data.id);
       if (!p || (data.threadId && p.public.threadId !== data.threadId) || !['accept', 'decline', 'cancel'].includes(data.decision)) throw new Error('此审批已结束或参数不正确');
+      this.assertControllable(p.public.threadId);
       this.codex.respond(p.rpcId, { decision: data.decision }); this.approvals.delete(data.id); this.state(); return { ok: true };
     }
     if (!validThreadId(data.threadId)) throw new Error('Invalid thread ID');
@@ -215,6 +236,10 @@ export class Agent {
         }
       }
       await this.codex.start();
+      if (this.source.isChild(row)) {
+        const readable = await this.codex.call('thread/read', { threadId: data.threadId, includeTurns: false });
+        if (readable.thread?.canAcceptDirectInput === false) throw new Error('Codex 当前不接受此子对话直接输入，请返回父对话安排后续任务');
+      }
       if (active) {
         if (action === 'queue-start') throw new Error('当前任务仍在执行，排队消息将在本轮结束后继续');
         if (data.mode === 'steer') {
@@ -261,9 +286,18 @@ export class Agent {
   async inputs(data) {
     return buildInputs(data.text, await this.attachments.selected(data.threadId, data.attachments || []));
   }
+  assertControllable(id) {
+    const row = this.source.row(id);
+    if (this.source.isChild(row)) {
+      const child = this.source.snapshot().childThreads.find(t => t.id === id);
+      if (!child || child.readOnly) throw new Error('此子对话不可操作：请确认历史在本机、未归档且父对话可访问');
+    }
+    return row;
+  }
   async createThread(data) {
     if (!this.config.controlsEnabled) throw new Error('电脑连接程序未开启操作权限');
     if (typeof data.title !== 'string' || data.title.length > 120 || data.projectId != null && typeof data.projectId !== 'string') throw new Error('新建参数无效');
+    if (data.parentThreadId != null) return this.createChild(data);
     const project = data.projectId ? this.source.snapshot().sidebar.projects.find(p => p.id === data.projectId) : null;
     if (data.projectId && !project) throw new Error('项目不存在，请刷新列表后重试');
     let cwd;
@@ -295,6 +329,31 @@ export class Agent {
       await this.codex.call('thread/unsubscribe', { threadId: id }).catch(() => {});
       return { thread, warning };
     } finally { this.reading--; this.releaseWhenIdle(); }
+  }
+  async createChild(data) {
+    if (!validThreadId(data.parentThreadId) || data.projectId || data.rootPath) throw new Error('子对话父级参数无效');
+    const parent = this.assertControllable(data.parentThreadId);
+    if (parent.archived || !this.source.isLocal(parent)) throw new Error('只能在本机未归档的对话下新建子对话');
+    if (this.inflight.has(parent.id)) throw new Error('此对话正在提交，请稍后新建子对话');
+    this.inflight.add(parent.id); this.reading++; clearTimeout(this.idleTimer);
+    try {
+      await this.codex.start();
+      // Native attached forks preserve the desktop's ancestry and inherited permissions.
+      // Do not resume or interrupt the parent, and never silently create an ordinary root.
+      const result = await this.codex.call('thread/fork', { threadId: parent.id, attachToSource: true, excludeTurns: true, ephemeral: false });
+      const id = result.thread?.id;
+      if (!validThreadId(id)) { const error = new Error('子对话创建结果待确认，请刷新后核对，勿重复新建'); error.uncertain = true; throw error; }
+      try {
+        const indexed = this.source.snapshot().childThreads.find(t => t.id === id && t.parentThreadId === parent.id);
+        if (!indexed) { const error = new Error('子对话父子关系尚未确认，请刷新后核对'); error.uncertain = true; throw error; }
+        let warning;
+        try { await this.codex.call('thread/name/set', { threadId: id, name: data.title.trim() || '手机子对话' }); }
+        catch { warning = '子对话已创建，标题暂未更新'; }
+        const thread = { ...indexed, title: data.title.trim() || '手机子对话' };
+        this.snapshot(); this.changed(id); this.changed(parent.id);
+        return { thread, warning };
+      } finally { await this.codex.call('thread/unsubscribe', { threadId: id }).catch(() => {}); }
+    } finally { this.inflight.delete(parent.id); this.reading--; this.releaseWhenIdle(); }
   }
   releaseWhenIdle() {
     clearTimeout(this.idleTimer);

@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { TRANSCRIPT_VERSION } from './transcript.mjs';
+import { linkChildren } from './thread-family.mjs';
 
 export const credentialHash = value => createHash('sha256').update(value).digest('hex');
 
@@ -109,12 +110,16 @@ export class Store {
       return { id, name };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  snapshot(threads, sidebar = null, deviceId = this.primaryDeviceId) {
+  snapshot(threads, sidebar = null, deviceId = this.primaryDeviceId, childThreads = []) {
+    const children = linkChildren(threads, childThreads);
+    const counts = new Map();
+    for (const child of children) counts.set(child.rootThreadId, (counts.get(child.rootThreadId) || 0) + 1);
     this.db.exec('BEGIN');
     try {
       this.db.prepare('DELETE FROM threads WHERE owner_id=? AND device_id=?').run(...this.scope(deviceId));
       const stmt = this.db.prepare('INSERT INTO threads VALUES (?,?,?,?)');
-      for (const thread of threads) stmt.run(...this.scope(deviceId), thread.id, JSON.stringify(thread));
+      for (const thread of threads) stmt.run(...this.scope(deviceId), thread.id, JSON.stringify({ ...thread, childCount: counts.get(thread.id) || 0 }));
+      for (const child of children) stmt.run(...this.scope(deviceId), child.id, JSON.stringify(child));
       this.setMeta(deviceId, 'lastSync', String(Date.now()));
       this.setMeta(deviceId, 'sidebar', JSON.stringify(sidebar || { projects: [] }));
       this.db.exec('COMMIT');
@@ -123,6 +128,13 @@ export class Store {
   setMeta(deviceId, key, value) { this.db.prepare('INSERT OR REPLACE INTO device_meta VALUES (?,?,?,?)').run(...this.scope(deviceId), key, value); }
   getMeta(deviceId, key) { return this.db.prepare('SELECT value FROM device_meta WHERE owner_id=? AND device_id=? AND key=?').get(...this.scope(deviceId), key)?.value; }
   list(deviceId = this.primaryDeviceId) { return this.db.prepare('SELECT payload FROM threads WHERE owner_id=? AND device_id=?').all(...this.scope(deviceId)).map(x => JSON.parse(x.payload)); }
+  family(id, deviceId = this.primaryDeviceId) {
+    const selected = this.thread(id, deviceId);
+    if (!selected) return null;
+    const rootId = selected.rootThreadId || selected.id, root = this.thread(rootId, deviceId);
+    if (!root || root.parentThreadId) return null;
+    return { rootId, threads: [root, ...this.list(deviceId).filter(t => t.parentThreadId && t.rootThreadId === rootId)] };
+  }
   sidebar(deviceId = this.primaryDeviceId) { return JSON.parse(this.getMeta(deviceId, 'sidebar') || '{"projects":[]}'); }
   thread(id, deviceId = this.primaryDeviceId) { const r = this.db.prepare('SELECT payload FROM threads WHERE owner_id=? AND device_id=? AND id=?').get(...this.scope(deviceId), id); return r ? JSON.parse(r.payload) : null; }
   saveThread(thread, deviceId) { this.db.prepare('INSERT OR REPLACE INTO threads VALUES (?,?,?,?)').run(...this.scope(deviceId), thread.id, JSON.stringify(thread)); }

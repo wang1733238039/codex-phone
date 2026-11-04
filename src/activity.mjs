@@ -52,7 +52,13 @@ export class ActivityIndex {
       const lines = text.split('\n');
       // Ignore a partial final JSON record while the desktop is writing it.
       if (!text.endsWith('\n')) lines.pop();
-      const activity = summarizeActivity(lines);
+      // A copied parent rollout can precede a subagent's own records.
+      const child = row.parentThreadId || /subagent|sub_agent/i.test(`${row.source || ''} ${row.thread_source || ''}`);
+      const childCreatedAt = row.created_at_ms || row.created_at * 1000;
+      const activity = summarizeActivity(child ? lines.filter(line => {
+        if (!Number.isFinite(childCreatedAt)) return false;
+        try { return Date.parse(JSON.parse(line).timestamp) >= childCreatedAt; } catch { return false; }
+      }) : lines);
       const prior = this.cache.get(row.id)?.activity;
       if (!activity.resultKey && prior?.resultKey) { activity.resultKey = prior.resultKey; activity.resultAt = prior.resultAt; }
       this.cache.set(row.id, { signature, activity });

@@ -4,7 +4,7 @@ $taskRoot = Split-Path -Parent $PSScriptRoot
 $taskStage = Join-Path $taskRoot '.data/connector-package'
 $taskOutput = Join-Path $taskRoot 'public/downloads/codex-phone-agent.zip'
 $taskFiles = @(
-    'src/agent.mjs', 'src/desktop.mjs', 'src/config.mjs', 'src/codex.mjs', 'src/local-source.mjs', 'src/sidebar.mjs', 'src/transcript.mjs', 'src/activity.mjs',
+    'src/agent.mjs', 'src/desktop.mjs', 'src/config.mjs', 'src/codex.mjs', 'src/local-source.mjs', 'src/sidebar.mjs', 'src/transcript.mjs', 'src/activity.mjs', 'src/thread-family.mjs',
     'src/attachment-common.mjs', 'src/agent-attachments.mjs',
     'tools/pair.mjs', 'tools/remote-agent.mjs', 'tools/connector-status.mjs', 'tools/install-connector.mjs',
     'package.json', 'package-lock.json', 'README.md', 'start-remote-agent.ps1', 'start-remote-watch.ps1', 'install-remote-autostart.ps1',

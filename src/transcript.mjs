@@ -17,13 +17,25 @@ export function userText(value) {
 }
 
 export class Transcript {
-  constructor() { this.messages = []; this.pending = []; this.seen = new Set(); this.sequence = 0; this.running = false; this.turnStatus = 'idle'; this.lastActivityAt = 0; this.turnId = null; }
+  constructor({ childThreadId } = {}) { this.messages = []; this.pending = []; this.seen = new Set(); this.sequence = 0; this.running = false; this.turnStatus = 'idle'; this.lastActivityAt = 0; this.turnId = null;
+    this.childThreadId = childThreadId; this.childHistoryStarted = !childThreadId; this.childStartOrdinal = null; }
   add(role, text, item, entry, rank) {
     if (typeof text !== 'string') return;
     this.pending.push({ id: item.id || null, role, text, time: entry.timestamp, phase: item.phase || null, rank, order: this.sequence++ });
   }
   push(entry) {
     const p = entry.payload || {};
+    if (this.childThreadId) {
+      if (!this.childHistoryStarted && entry.type === 'session_meta' && (p.id || p.session_id) === this.childThreadId) {
+        // Forks can carry a complete parent rollout before the child's own metadata.
+        this.messages = []; this.pending = []; this.seen.clear(); this.sequence = 0;
+        this.running = false; this.turnStatus = 'idle'; this.lastActivityAt = 0; this.turnId = null;
+        this.childHistoryStarted = true;
+        this.childStartOrdinal = Number.isSafeInteger(p.subagent_history_start_ordinal) ? p.subagent_history_start_ordinal : null;
+        return;
+      }
+      if (!this.childHistoryStarted || this.childStartOrdinal != null && Number.isSafeInteger(entry.ordinal) && entry.ordinal < this.childStartOrdinal) return;
+    }
     const time = Date.parse(entry.timestamp);
     if (Number.isFinite(time)) this.lastActivityAt = Math.max(this.lastActivityAt, time);
     if (entry.type === 'event_msg') {

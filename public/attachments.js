@@ -80,7 +80,7 @@ const PhoneAttachments = (() => {
     } finally { item.busy = false; if (epoch === sessionEpoch && !item.removed) changed(item); }
   }
   function add(files) {
-    if (!state.selected) return;
+    if (!state.selected || childReadOnly()) return;
     const items = list();
     for (const file of files) {
       const existing = items.find(a => !a.busy && a.error && a.name === file.name && a.size === file.size);
@@ -128,7 +128,7 @@ const PhoneAttachments = (() => {
   function ids() { return current().filter(a => a.stage === 'ready' && !a.error).map(a => a.id); }
   function blocked() { return current().some(a => a.busy || a.error || a.stage !== 'ready'); }
   function render() {
-    const allowed = Boolean(state.selected && state.detail && state.status.online && state.status.controls && state.detail.thread.local && !state.detail.thread.archived);
+    const allowed = Boolean(state.selected && state.detail && !childReadOnly() && state.status.online && state.status.controls && state.detail.thread.local && !state.detail.thread.archived);
     const supported = Boolean(state.status.capabilities?.attachments);
     $('attach-button').disabled = !allowed || !supported;
     $('attachment-note').textContent = !state.selected ? '' : !state.status.online ? '电脑上线后可添加材料' :
