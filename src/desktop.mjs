@@ -22,6 +22,13 @@ export class DesktopBridge {
     if (ipc) this.bind();
   }
   bind() {
+    this.ipc.onDiscovered = id => {
+      this.discovering ||= new Set(); this.discoveryRetry ||= new Map();
+      if (this.discovering.size >= 4 || this.discovering.has(id) || Date.now() < (this.discoveryRetry.get(id) || 0)) return;
+      this.discovering.add(id); this.discoveryRetry.set(id, Date.now() + 30000);
+      if (this.discoveryRetry.size > 256) this.discoveryRetry.delete(this.discoveryRetry.keys().next().value);
+      this.read(id).catch(() => {}).finally(() => this.discovering.delete(id));
+    };
     this.ipc.onSnapshot = id => { this.collectApprovals(id); this.changed(id); };
     this.ipc.onUnavailable = id => { this.followed.delete(id); this.collectApprovals(id); this.changed(id); };
     this.ipc.onDisconnect = () => { this.status.connected = false; this.approvals.clear(); this.followed.clear(); };

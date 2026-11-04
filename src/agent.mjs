@@ -5,7 +5,8 @@ import { LocalSource, validThreadId } from './local-source.mjs';
 import { CodexClient } from './codex.mjs';
 import { loadConfig } from './config.mjs';
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { desktopLogCandidates, sideParent, sideDetail, mergeSideConversations } from './side-conversations.mjs';
 import { pathToFileURL } from 'node:url';
 import { AgentAttachments } from './agent-attachments.mjs';
 import { buildInputs, attachmentText } from './attachment-common.mjs';
@@ -33,10 +34,63 @@ export class Agent {
   }
   state() { this.send({ type: 'state', activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
   snapshot() {
-    try { this.send({ type: 'snapshot', ...this.source.snapshot(), info: { computer: this.config.computerName || hostname(), controls: Boolean(this.config.controlsEnabled),
-      version: '0.6.8', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true } },
+    this.discoverSideConversations().catch(() => {});
+    try { this.send({ type: 'snapshot', ...this.combinedSnapshot(), info: { computer: this.config.computerName || hostname(), controls: Boolean(this.config.controlsEnabled),
+      version: '0.6.9', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true } },
       activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
     catch (error) { console.error('Local index unavailable:', error.message); }
+  }
+  combinedSnapshot() {
+    return mergeSideConversations(this.source.snapshot(), [...(this.desktop.ipc?.states?.values() || [])].map(v => v.state));
+  }
+  async discoverSideConversations() {
+    if (this.sideDiscovery || Date.now() - (this.sideCheckedAt || 0) < 30000) return;
+    this.sideDiscovery = true; this.sideCheckedAt = Date.now();
+    try {
+      if (!await this.desktop.connect()) return;
+      const directories = this.config.desktopLogDirectory ? [this.config.desktopLogDirectory] : [];
+      if (!directories.length && process.platform === 'win32' && process.env.LOCALAPPDATA) {
+        for (let day = 6; day >= 0; day--) {
+          const date = new Date(); date.setDate(date.getDate() - day);
+          directories.push(join(process.env.LOCALAPPDATA, 'Codex', 'Logs', String(date.getFullYear()), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')));
+        }
+      }
+      const snapshot = this.source.snapshot();
+      const indexed = new Set([...snapshot.threads, ...snapshot.childThreads].map(t => t.id));
+      const candidates = [...new Set([...directories.flatMap(desktopLogCandidates), ...this.desktop.followed])].filter(id => !indexed.has(id)).slice(-128);
+      for (let i = 0; i < candidates.length; i += 4) {
+        if (this.stopped) break;
+        await Promise.allSettled(candidates.slice(i, i + 4).map(id => this.desktop.read(id, true)));
+      }
+      if (candidates.length && !this.stopped) this.snapshot();
+    } finally { this.sideDiscovery = false; }
+  }
+  sideState(id) {
+    const state = this.desktop?.ipc?.state?.(id), parentId = sideParent(state);
+    if (!parentId) return null;
+    const parent = this.source.snapshot().threads.find(t => t.id === parentId && t.local && !t.archived);
+    return parent ? state : null;
+  }
+  async handleSide(action, data) {
+    const state = await this.desktop.read(data.threadId, true);
+    if (!state || !this.sideState(data.threadId)) throw new Error('桌面临时侧栏已关闭或连接中断，请回到主对话刷新');
+    if (action === 'detail') return { ...sideDetail(state), ...this.desktop.runtime(data.threadId, state), queue: [], queueKnown: true };
+    if (!this.config.controlsEnabled) throw new Error('电脑连接程序未开启操作权限');
+    if (['attachment-start', 'attachment-chunk', 'attachment-finish'].includes(action)) return this.attachments[action.slice(11)](data);
+    if (action === 'stop') return this.desktop.stop(data.threadId, data.turnId);
+    if (action === 'approve') {
+      if (!['accept', 'decline', 'cancel'].includes(data.decision)) throw new Error('审批参数无效');
+      return this.desktop.approve(data.id, data.threadId, data.decision);
+    }
+    if (action !== 'send') throw new Error('临时侧栏暂不支持此操作，请使用发送或补充本轮');
+    if (typeof data.text !== 'string' || (!data.text.trim() && !data.attachments?.length) || data.text.length > 32000) throw new Error('Invalid message');
+    if (this.inflight.has(data.threadId)) throw new Error('正在提交上一条消息，请稍后');
+    this.inflight.add(data.threadId);
+    try {
+      const result = await this.desktop.send(data.threadId, data, await this.inputs(data), await this.selection(data), state);
+      if (!result) throw new Error('桌面侧栏正在执行，请选择“补充本轮”发送；临时侧栏暂不支持排队');
+      return result;
+    } finally { this.inflight.delete(data.threadId); }
   }
   connect() {
     if (this.stopped) return;
@@ -133,6 +187,7 @@ export class Agent {
       ...(desktopState ? this.desktop.runtime(threadId, desktopState) : {}) };
   }
   async handle(action, data) {
+    if (validThreadId(data.threadId) && this.sideState?.(data.threadId)) return this.handleSide(action, data);
     if (action === 'create-thread') return this.createThread(data);
     if (action === 'detail') {
       const detail = await this.source.detail(data.threadId);
