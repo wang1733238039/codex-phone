@@ -44,7 +44,7 @@ const details = new Map([
 ]);
 const ws = new WebSocket(origin.replace('http', 'ws') + '/agent', { headers: { Authorization: 'Bearer child-test-agent' } });
 await once(ws, 'open');
-let delayChild = false, heldChild, forwardedControls = 0, childControls = false;
+let delayChild = false, heldChild, forwardedControls = 0, childControls = false, createdCount = 0;
 ws.on('message', raw => {
   const msg = JSON.parse(raw); if (msg.type !== 'request') return;
   const reply = data => ws.send(JSON.stringify({ type: 'response', id: msg.id, data }));
@@ -58,6 +58,7 @@ ws.on('message', raw => {
   }
   forwardedControls++;
   if (msg.action === 'create-thread') {
+    createdCount++;
     const thread = { ...common, id: randomUUID(), title: msg.data.title, parentThreadId: msg.data.parentThreadId, rootThreadId: root, depth: 2 };
     children.push(thread); details.set(thread.id, []); snapshot(); return reply({ thread });
   }
@@ -165,6 +166,40 @@ try {
   await page.waitForFunction(ids => state.selected !== ids.child && state.detail?.id === state.selected, { child });
   assert.equal(await page.locator('#message').isDisabled(), false);
   check('native child creation opens editable child');
+  // A lost HTTP reply must reconcile the original command after a full reload.
+  const initialCreated = createdCount;
+  await page.locator('#family-button').click();
+  await page.route('**/threads', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fetch(); await route.abort('connectionreset');
+  });
+  await page.locator('#create-child').click();
+  await page.waitForFunction(() => !state.creatingChild);
+  assert.equal(await page.locator('#create-child').innerText(), '核对上次创建结果');
+  assert.equal(await page.locator('#create-child').isEnabled(), true);
+  const receipt = await page.evaluate(() => childReceipt(state.selected, state.deviceId));
+  assert.ok(receipt?.requestId);
+  await page.unroute('**/threads');
+  await page.reload();
+  await page.waitForFunction(() => state.detail?.id === state.selected && state.selected);
+  await page.locator('#family-button').click();
+  await page.locator('#create-child').filter({ hasText: '核对上次创建结果' }).click();
+  await page.waitForFunction(() => !state.creatingChild && !document.getElementById('family-dialog').open);
+  assert.equal(createdCount, initialCreated + 1);
+  assert.equal(await page.evaluate(() => [...childReceipts.values()].length), 0);
+  check('lost create reply survives reload and opens original child without duplicate creation');
+  await page.locator('#family-button').click();
+  await page.route('**/threads', route => route.request().method() === 'POST'
+    ? route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: '创建被拒绝，请重试' }) })
+    : route.continue());
+  await page.locator('#create-child').click();
+  await page.waitForFunction(() => !state.creatingChild);
+  assert.equal(await page.locator('#create-child').innerText(), '新建子对话');
+  assert.equal(await page.locator('#create-child').isEnabled(), true);
+  assert.match(await page.locator('#child-create-status').innerText(), /创建被拒绝/);
+  await page.unroute('**/threads');
+  await page.keyboard.press('Escape');
+  check('explicit create failure is visible and allows retry');
   await select(child);
   ws.close(); await once(ws, 'close');
   await page.reload(); await page.waitForFunction(id => state.detail?.id === id && !state.status.online, child);
@@ -176,7 +211,7 @@ try {
   await page.locator('#family-button').click();
   assert.equal(await page.locator('#create-child').isDisabled(), true);
   check('empty family keeps entry and offline creation disabled');
-  assert.equal(forwardedControls, 2); assert.deepEqual(errors, []);
+  assert.equal(forwardedControls, 3); assert.deepEqual(errors, []);
   const contrast = await page.evaluate(() => {
     function luminance(rgb) {
       const c = rgb.match(/[\d.]+/g).slice(0, 3).map(Number).map(n => { const v = n / 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; });

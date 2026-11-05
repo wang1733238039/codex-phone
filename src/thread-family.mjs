@@ -8,7 +8,7 @@ export function threadSource(row) {
   return {
     subagent: /subagent|sub_agent/i.test(row.thread_source || '') || Boolean(source?.subagent),
     internal: Boolean(source?.subagent && !spawn),
-    parentId: row.attached_thread_parent_id || spawn?.parent_thread_id || null,
+    parentId: row.attached_thread_parent_id || spawn?.parent_thread_id || row.phone_child_parent_id || null,
   };
 }
 

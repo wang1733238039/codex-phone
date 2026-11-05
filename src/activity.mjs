@@ -40,28 +40,29 @@ export class ActivityIndex {
         return rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
       });
       if (!allowed) return { state: 'unknown' };
-      const stat = statSync(path), signature = `${path}:${stat.size}:${stat.mtimeMs}`;
+      const historyStart = row.phone_child_history_start || 0;
+      const stat = statSync(path), signature = `${path}:${stat.size}:${stat.mtimeMs}:${historyStart}`;
       if (this.cache.get(row.id)?.signature === signature) return this.cache.get(row.id).activity;
-      const fd = openSync(path, 'r'), offset = Math.max(0, stat.size - 1024 * 1024);
+      const fd = openSync(path, 'r'), offset = Math.max(historyStart, stat.size - 1024 * 1024);
       let text;
       try {
-        const bytes = Buffer.alloc(Math.min(stat.size, 1024 * 1024));
+        const bytes = Buffer.alloc(Math.max(0, Math.min(stat.size - offset, 1024 * 1024)));
         text = bytes.subarray(0, readSync(fd, bytes, 0, bytes.length, offset)).toString('utf8');
       } finally { closeSync(fd); }
-      if (offset) text = text.slice(text.indexOf('\n') + 1);
+      if (offset > historyStart) text = text.slice(text.indexOf('\n') + 1);
       const lines = text.split('\n');
       // Ignore a partial final JSON record while the desktop is writing it.
       if (!text.endsWith('\n')) lines.pop();
       // A copied parent rollout can precede a subagent's own records.
       const child = row.parentThreadId || /subagent|sub_agent/i.test(`${row.source || ''} ${row.thread_source || ''}`);
       const childCreatedAt = row.created_at_ms || row.created_at * 1000;
-      const activity = summarizeActivity(child ? lines.filter(line => {
+      const activity = summarizeActivity(child && !historyStart ? lines.filter(line => {
         if (!Number.isFinite(childCreatedAt)) return false;
         try { return Date.parse(JSON.parse(line).timestamp) >= childCreatedAt; } catch { return false; }
       }) : lines);
-      const prior = this.cache.get(row.id)?.activity;
+      const cached = this.cache.get(row.id), prior = cached?.historyStart === historyStart ? cached.activity : null;
       if (!activity.resultKey && prior?.resultKey) { activity.resultKey = prior.resultKey; activity.resultAt = prior.resultAt; }
-      this.cache.set(row.id, { signature, activity });
+      this.cache.set(row.id, { signature, activity, historyStart });
       return activity;
     } catch { return { state: 'unknown' }; }
   }

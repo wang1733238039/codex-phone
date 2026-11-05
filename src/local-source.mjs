@@ -6,11 +6,13 @@ import { Transcript } from './transcript.mjs';
 import { resolveSidebar } from './sidebar.mjs';
 import { ActivityIndex } from './activity.mjs';
 import { localFamily, threadSource, validThreadId } from './thread-family.mjs';
+import { PhoneChildren } from './phone-children.mjs';
 export { validThreadId } from './thread-family.mjs';
 
 export class LocalSource {
   constructor(home) {
     this.home = realpathSync.native(home);
+    this.phoneChildren = new PhoneChildren(this.home);
     this.activity = new ActivityIndex(this.home);
     this.cache = new Map();
     const files = readdirSync(home).filter(n => /^state_\d+\.sqlite$/.test(n)).sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0]));
@@ -30,7 +32,7 @@ export class LocalSource {
     try {
       const tables = new Set(this.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(t => t.name));
       const read = name => tables.has(name) ? this.db.prepare(`SELECT * FROM ${name}`).all() : [];
-      const allRows = this.db.prepare('SELECT * FROM threads ORDER BY updated_at DESC').all();
+      const allRows = this.phoneChildren.decorate(this.db.prepare('SELECT * FROM threads ORDER BY updated_at DESC').all());
       const { roots: rows, children } = localFamily(allRows, read('thread_spawn_edges'));
       const { sidebar, threadFields } = resolveSidebar(rows, { projects: read('projects'), roots: read('project_roots'), sections: read('thread_sections'), settings, home: this.home });
       const projectRow = r => ({
@@ -60,8 +62,9 @@ export class LocalSource {
     if (!validThreadId(id)) throw new Error('Invalid thread ID');
     const row = this.db.prepare('SELECT * FROM threads WHERE id=?').get(id);
     if (!row) throw new Error('Thread not found');
-    return row;
+    return this.phoneChildren.decorate([row])[0];
   }
+  registerChild(id, parentId) { this.phoneChildren.register(this.row(id), parentId); }
   isChild(row) {
     const source = threadSource(row);
     if (source.subagent || source.parentId) return true;
@@ -77,15 +80,17 @@ export class LocalSource {
       return rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
     });
     if (!allowed) throw new Error('Session path is outside the Codex session directories');
-    const stat = statSync(path), signature = `${path}:${stat.size}:${stat.mtimeMs}`;
+    const historyStart = row.phone_child_history_start;
+    const stat = statSync(path), signature = `${path}:${stat.size}:${stat.mtimeMs}:${historyStart ?? ''}`;
     const cached = this.cache.get(id);
     const cacheFresh = cached && cached.signature === signature &&
       (!cached.detail.running || Date.now() - cached.cachedAt < this.runningCacheTtlMs);
     if (cacheFresh) return { ...cached.detail };
     if (stat.size > 256 * 1024 * 1024) throw new Error('会话文件超过 256 MB，暂不支持在手机读取');
     const child = this.isChild(row);
-    const transcript = new Transcript(child ? { childThreadId: id } : {});
-    const stream = createReadStream(path, { encoding: 'utf8' });
+    if (historyStart != null && stat.size < historyStart) throw new Error('子对话历史已重写，请在电脑核对后重新连接');
+    const transcript = new Transcript(child && historyStart == null ? { childThreadId: id } : {});
+    const stream = createReadStream(path, { encoding: 'utf8', ...(historyStart != null ? { start: historyStart } : {}) });
     const lines = createInterface({ input: stream, crlfDelay: Infinity });
     try {
       for await (const line of lines) {

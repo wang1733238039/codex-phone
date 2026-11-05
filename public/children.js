@@ -2,6 +2,21 @@
 function selectedThread() {
   return state.detail?.thread || state.family?.threads.find(t => t.id === state.selected) || state.threads.find(t => t.id === state.selected);
 }
+const childReceipts = new Map();
+function childReceiptKey(parentId, deviceId) { return `codex-phone-child-create:${scopeKey(parentId, deviceId)}`; }
+function childReceipt(parentId, deviceId) {
+  const key = childReceiptKey(parentId, deviceId);
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    if (value?.parentThreadId === parentId && typeof value.requestId === 'string') return value;
+  } catch {}
+  return childReceipts.get(key);
+}
+function saveChildReceipt(parentId, deviceId, receipt) {
+  const key = childReceiptKey(parentId, deviceId);
+  if (receipt) childReceipts.set(key, receipt); else childReceipts.delete(key);
+  try { if (receipt) localStorage.setItem(key, JSON.stringify(receipt)); else localStorage.removeItem(key); } catch {}
+}
 function childReadOnly() { const thread = selectedThread(); return Boolean(thread?.readOnly || thread?.parentThreadId && !state.status.capabilities?.childControls); }
 function resetFamily(retainId) {
   state.familySeq++;
@@ -42,7 +57,8 @@ function renderFamily() {
 }
 function renderFamilyList() {
   const box = $('family-list'), focusId = box.contains(document.activeElement) ? document.activeElement.dataset.familyThreadId : null;
-  $('create-child').disabled = Boolean(!state.family || !state.status.online || !state.status.controls || !state.status.capabilities?.childControls || childReadOnly() || selectedThread()?.archived || selectedThread()?.local !== true || state.creatingChild || state.childCreationUnknown || !PhoneAccounts.active());
+  $('create-child').disabled = Boolean(!state.family || !state.status.online || !state.status.controls || !state.status.capabilities?.childControls || childReadOnly() || selectedThread()?.archived || selectedThread()?.ephemeral || selectedThread()?.local !== true || state.creatingChild || !PhoneAccounts.active());
+  $('create-child').textContent = state.creatingChild ? '正在创建…' : childReceipt(state.selected, state.deviceId) ? '核对上次创建结果' : '新建子对话';
   const scroll = box.scrollTop; box.replaceChildren();
   $('family-summary').textContent = `${deviceName(state.deviceId)} · ${Math.max(0, (state.family?.threads.length || 1) - 1)} 个子对话`;
   if (state.familyError) {
@@ -80,25 +96,51 @@ function renderFamilyList() {
 document.addEventListener('DOMContentLoaded', () => {
   $('create-child').onclick = async () => {
     const parentThreadId = state.selected, deviceId = state.deviceId;
+    if (state.creatingChild) return;
+    let receipt = childReceipt(parentThreadId, deviceId), accepted = false;
     state.creatingChild = true; renderFamilyList();
-    $('child-create-status').textContent = '正在创建子对话…';
+    $('child-create-status').textContent = receipt ? '正在核对上次创建结果…' : '正在创建子对话…';
     try {
-      const data = await deviceApi('/threads', { parentThreadId, title: '手机子对话', requestId: uuid() }, deviceId);
-      if (data.state === 'failed') throw Object.assign(new Error(data.result?.error || '子对话创建失败'), { status: 400 });
-      if (data.state !== 'accepted' || !data.result?.thread?.id) {
-        state.childCreationUnknown = true;
-        throw new Error(data.result?.error || '创建结果待确认，请刷新对话列表核对，避免重复创建');
+      let data;
+      if (receipt) data = await deviceApi(`/commands/${receipt.requestId}`, undefined, deviceId);
+      else {
+        receipt = { parentThreadId, title: '手机子对话', requestId: uuid() };
+        saveChildReceipt(parentThreadId, deviceId, receipt);
       }
+      if (!data || data.state === 'not_found') data = await deviceApi('/threads', receipt, deviceId);
+      for (let attempt = 0; data.state === 'pending' && attempt < 8; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        data = await deviceApi(`/commands/${receipt.requestId}`, undefined, deviceId);
+      }
+      if (data.state === 'failed') {
+        saveChildReceipt(parentThreadId, deviceId, null);
+        throw Object.assign(new Error(data.result?.error || '子对话创建失败，可以重试'), { status: 400 });
+      }
+      if (data.state !== 'accepted' || !data.result?.thread?.id) {
+        throw new Error(data.result?.error || '创建结果待确认，请点“核对上次创建结果”，不会重复新建');
+      }
+      accepted = true;
+      if (deviceId !== state.deviceId || parentThreadId !== state.selected) {
+        notice(`${deviceName(deviceId)}：子对话已创建，返回原对话核对即可打开`); return;
+      }
+      await loadList();
       if (deviceId !== state.deviceId || parentThreadId !== state.selected) return;
       $('family-dialog').close();
       await openThread(data.result.thread.id);
+      if (deviceId !== state.deviceId || state.detail?.id !== data.result.thread.id) {
+        notice('子对话已创建，读取未完成；回到父对话核对即可重新打开'); return;
+      }
+      saveChildReceipt(parentThreadId, deviceId, null);
+      $('child-create-status').textContent = '';
       notice(data.result.warning || '子对话已创建，可以发送消息');
     } catch (error) {
-      if (!error.status || error.status >= 500) state.childCreationUnknown = true;
-      $('child-create-status').textContent = error.message;
+      if (!accepted && error.status && error.status < 500) saveChildReceipt(parentThreadId, deviceId, null);
+      if (deviceId === state.deviceId && parentThreadId === state.selected) $('child-create-status').textContent = error.message;
+      notice(error.message);
     } finally { state.creatingChild = false; if ($('family-dialog').open) renderFamilyList(); }
   };
   $('family-button').onclick = () => {
+    if (!state.creatingChild) $('child-create-status').textContent = selectedThread()?.ephemeral ? '临时侧栏不能继续分支，请返回主对话新建子对话' : '';
     renderFamilyList(); $('family-dialog').showModal(); loadFamily();
   };
   $('return-main-thread').onclick = () => {

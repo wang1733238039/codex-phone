@@ -36,7 +36,7 @@ export class Agent {
   snapshot() {
     this.discoverSideConversations().catch(() => {});
     try { this.send({ type: 'snapshot', ...this.combinedSnapshot(), info: { computer: this.config.computerName || hostname(), controls: Boolean(this.config.controlsEnabled),
-      version: '0.6.9', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true } },
+      version: '0.6.10', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true } },
       activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
     catch (error) { console.error('Local index unavailable:', error.message); }
   }
@@ -393,17 +393,34 @@ export class Agent {
     this.inflight.add(parent.id); this.reading++; clearTimeout(this.idleTimer);
     try {
       await this.codex.start();
-      // Native attached forks preserve the desktop's ancestry and inherited permissions.
-      // Do not resume or interrupt the parent, and never silently create an ordinary root.
-      const result = await this.codex.call('thread/fork', { threadId: parent.id, attachToSource: true, excludeTurns: true, ephemeral: false });
+      // Prefer native attachments. An explicit writer rejection has no side effect,
+      // so a native fork can safely preserve context without taking the parent owner.
+      let result, phoneLinked = false;
+      try {
+        result = await this.codex.call('thread/fork', { threadId: parent.id, attachToSource: true, excludeTurns: true, ephemeral: false });
+      } catch (error) {
+        if (error.uncertain || !this.activeWriterError(error)) throw error;
+        result = await this.codex.call('thread/fork', { threadId: parent.id, attachToSource: false, excludeTurns: true, ephemeral: false });
+        phoneLinked = true;
+      }
       const id = result.thread?.id;
       if (!validThreadId(id)) { const error = new Error('子对话创建结果待确认，请刷新后核对，勿重复新建'); error.uncertain = true; throw error; }
       try {
-        const indexed = this.source.snapshot().childThreads.find(t => t.id === id && t.parentThreadId === parent.id);
-        if (!indexed) { const error = new Error('子对话父子关系尚未确认，请刷新后核对'); error.uncertain = true; throw error; }
         let warning;
         try { await this.codex.call('thread/name/set', { threadId: id, name: data.title.trim() || '手机子对话' }); }
         catch { warning = '子对话已创建，标题暂未更新'; }
+        let indexed;
+        for (let attempt = 0; attempt < 12; attempt++) {
+          if (phoneLinked) {
+            try { this.source.registerChild(id, parent.id); phoneLinked = false; } catch (error) {
+              if (attempt === 11) { error.uncertain = true; throw error; }
+            }
+          }
+          indexed = this.source.snapshot().childThreads.find(t => t.id === id && t.parentThreadId === parent.id);
+          if (indexed) break;
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        if (!indexed) { const error = new Error('子对话父子关系尚未确认，请刷新后核对'); error.uncertain = true; throw error; }
         const thread = { ...indexed, title: data.title.trim() || '手机子对话' };
         this.snapshot(); this.changed(id); this.changed(parent.id);
         return { thread, warning };
