@@ -10,7 +10,7 @@ const inside = (root, path) => { const part = relative(root, path); return part 
 const fail = text => { throw new Error(text); };
 const same = (before, after) => { if (before !== after) fail('文件已变化，请重新打开预览'); };
 const blocked = path => path.split(/[\\/]/).some(part =>
-  /^(?:\.git|\.ssh|\.config|\.codex|node_modules)$/i.test(part) ||
+  /^(?:\.git|\.ssh|\.config|\.codex|\.data|node_modules)$/i.test(part) ||
   /^(?:\.env(?:\..*)?|auth\.json|config\.toml|agent(?:\.remote)?\.json|server\.json)$/i.test(part) ||
   /\.(?:key|pem|pfx|p12|sqlite(?:-wal|-shm)?|db)$/i.test(part));
 

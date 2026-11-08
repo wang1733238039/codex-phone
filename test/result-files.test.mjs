@@ -87,6 +87,21 @@ test('changed final answers revoke stale resource ids and empty files download s
   f.detail.messages[0].text = 'No file in this final answer';
   await assert.rejects(f.files.info(f), /不属于/);
 });
+test('private runtime files remain blocked even when an old final answer links them', async t => {
+  const f = fixture(t);
+  const privateDirectory = join(f.cwd, '.data'); mkdirSync(privateDirectory);
+  writeFileSync(join(privateDirectory, 'login.md'), 'private test credential', 'utf8');
+  writeFileSync(join(privateDirectory, 'agent.remote.json'), '{"private":true}', 'utf8');
+  for (const reference of ['./.data/login.md', './.data/agent.remote.json']) {
+    f.detail.messages[0].text = `[old setup reply](${reference})`;
+    const id = f.files.descriptors(f.threadId, f.detail).messages[0].resultFiles[0].id;
+    await assert.rejects(f.files.info({ ...f, id }), /私有配置/);
+  }
+  symlinkSync(privateDirectory, join(f.cwd, 'public-output'), process.platform === 'win32' ? 'junction' : 'dir');
+  f.detail.messages[0].text = '[indirect](./public-output/login.md)';
+  const linkedId = f.files.descriptors(f.threadId, f.detail).messages[0].resultFiles[0].id;
+  await assert.rejects(f.files.info({ ...f, id: linkedId }), /真实路径属于私有配置/);
+});
 test('relay rejects forged result metadata and active MIME types', () => {
   const id = 'a'.repeat(64), meta = { id, name: 'test.html', size: 1, hash: 'b'.repeat(64),
     chunkBytes: CHUNK_BYTES, kind: 'image', mime: 'text/html' };
