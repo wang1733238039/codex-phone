@@ -6,14 +6,14 @@ import { ROOT } from '../src/config.mjs';
 const stage = resolve(ROOT, '.data', 'connector-package'), output = resolve(ROOT, 'public', 'downloads');
 mkdirSync(stage, { recursive: true }); mkdirSync(output, { recursive: true });
 const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
-const manifest = { name: 'codex-phone-connector', version: '0.6.10', private: true, type: 'module', license: 'AGPL-3.0-only', engines: { node: '>=24.0.0' },
+const manifest = { name: 'codex-phone-connector', version: '0.6.11', private: true, type: 'module', license: 'AGPL-3.0-only', engines: { node: '>=24.0.0' },
   scripts: { pair: 'node tools/pair.mjs', agent: 'node tools/remote-agent.mjs', 'install-connector': 'node tools/install-connector.mjs' },
   dependencies: { ws: lock.packages['node_modules/ws'].version } };
 writeFileSync(join(stage, 'package.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 writeFileSync(join(stage, 'package-lock.json'), JSON.stringify({ name: manifest.name, version: manifest.version, lockfileVersion: 3, requires: true,
   packages: { '': { name: manifest.name, version: manifest.version, license: manifest.license, dependencies: manifest.dependencies, engines: manifest.engines },
     'node_modules/ws': lock.packages['node_modules/ws'] } }, null, 2) + '\n', 'utf8');
-const files = ['src/agent.mjs', 'src/desktop.mjs', 'src/side-conversations.mjs', 'src/phone-children.mjs', 'src/config.mjs', 'src/codex.mjs', 'src/local-source.mjs', 'src/sidebar.mjs', 'src/transcript.mjs', 'src/activity.mjs', 'src/thread-family.mjs',
+const files = ['src/agent.mjs', 'src/desktop.mjs', 'src/side-conversations.mjs', 'src/phone-children.mjs', 'src/rollout.mjs', 'src/native-history.mjs', 'src/config.mjs', 'src/codex.mjs', 'src/local-source.mjs', 'src/sidebar.mjs', 'src/transcript.mjs', 'src/activity.mjs', 'src/thread-family.mjs',
   'src/attachment-common.mjs', 'src/agent-attachments.mjs',
   'tools/pair.mjs', 'tools/remote-agent.mjs', 'tools/connector-status.mjs', 'tools/install-connector.mjs',
   'start-remote-agent.ps1', 'start-remote-watch.ps1', 'install-remote-autostart.ps1',

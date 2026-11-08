@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, renameSync, openSync, readSync, closeSync, statSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, openSync, readSync, closeSync, realpathSync } from 'node:fs';
 import { join, relative, isAbsolute, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { validThreadId } from './thread-family.mjs';
+import { resolveRollout, readRolloutBuffer } from './rollout.mjs';
 
 // Ordinary native forks can be created while the desktop holds the parent.
 // Only forks created here and confirmed by native metadata join a phone family.
@@ -17,14 +18,18 @@ export class PhoneChildren {
   metadata(row) {
     let fd;
     try {
-      const path = realpathSync.native(row.rollout_path);
+      const storage = resolveRollout(this.home, row.rollout_path), { path, stat } = storage;
       const rel = relative(join(this.home, 'sessions'), path);
       if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
-      const stat = statSync(path), key = `${path}:${stat.birthtimeMs}`;
+      const key = `${path}:${stat.birthtimeMs}`;
       if (this.verified.has(key)) return this.verified.get(key);
-      fd = openSync(path, 'r');
-      const buffer = Buffer.alloc(Math.min(stat.size, 1024 * 1024));
-      const size = readSync(fd, buffer, 0, buffer.length, 0), end = buffer.indexOf(10, 0);
+      let buffer, size;
+      if (storage.compressed) { buffer = readRolloutBuffer(storage); size = buffer.length; }
+      else {
+        fd = openSync(path, 'r'); buffer = Buffer.alloc(Math.min(stat.size, 1024 * 1024));
+        size = readSync(fd, buffer, 0, buffer.length, 0);
+      }
+      const end = buffer.indexOf(10, 0);
       if (end < 0 || end >= size) return null;
       const entry = JSON.parse(buffer.subarray(0, end).toString('utf8'));
       const meta = entry.type === 'session_meta' ? entry.payload : null;
@@ -47,7 +52,8 @@ export class PhoneChildren {
   register(row, parentId) {
     if (!validThreadId(row.id) || !validThreadId(parentId) || row.id === parentId ||
         this.metadata(row)?.forked_from_id !== parentId) throw new Error('原生分支的父子关系未通过核验');
-    const historyStart = statSync(row.rollout_path).size;
+    const storage = resolveRollout(this.home, row.rollout_path);
+    const historyStart = storage.compressed ? readRolloutBuffer(storage).length : storage.stat.size;
     const children = this.entries().filter(entry => entry.id !== row.id);
     children.push({ id: row.id, parentId, historyStart });
     const temporary = `${this.path}.${randomUUID()}.tmp`;

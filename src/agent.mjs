@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { AgentAttachments } from './agent-attachments.mjs';
 import { buildInputs, attachmentText } from './attachment-common.mjs';
 import { DesktopBridge } from './desktop.mjs';
+import { nativeRecentDetail } from './native-history.mjs';
 
 export class Agent {
   constructor(config) {
@@ -36,7 +37,7 @@ export class Agent {
   snapshot() {
     this.discoverSideConversations().catch(() => {});
     try { this.send({ type: 'snapshot', ...this.combinedSnapshot(), info: { computer: this.config.computerName || hostname(), controls: Boolean(this.config.controlsEnabled),
-      version: '0.6.10', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true } },
+      version: '0.6.11', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true } },
       activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
     catch (error) { console.error('Local index unavailable:', error.message); }
   }
@@ -190,7 +191,20 @@ export class Agent {
     if (validThreadId(data.threadId) && this.sideState?.(data.threadId)) return this.handleSide(action, data);
     if (action === 'create-thread') return this.createThread(data);
     if (action === 'detail') {
-      const detail = await this.source.detail(data.threadId);
+      let detail;
+      try { detail = await this.source.detail(data.threadId); }
+      catch (error) {
+        const row = this.source.row(data.threadId);
+        if (error.code !== 'ROLLOUT_TOO_LARGE' || this.source.isChild(row)) throw error;
+        this.reading++; clearTimeout(this.idleTimer);
+        try {
+          await this.codex.start();
+          const page = await this.codex.call('thread/turns/list', {
+            threadId: data.threadId, limit: 15, sortDirection: 'desc', itemsView: 'full',
+          }, 10000);
+          detail = nativeRecentDetail(data.threadId, page.data || []);
+        } finally { this.reading--; this.releaseWhenIdle(); }
+      }
       if (detail.readOnly) return { ...detail, execution: { state: detail.running ? 'unconfirmed' : detail.turnStatus, verified: false, lastActivityAt: detail.lastActivityAt } };
       detail.ownedTurn = this.active.get(data.threadId) || null;
       if (!this.config.controlsEnabled) return detail;

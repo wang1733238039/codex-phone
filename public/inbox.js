@@ -39,6 +39,8 @@ function rememberReadResult(receipt) {
 }
 function resultState(thread) {
   if (state.status.activeTurns?.some(t => t.threadId === thread.id)) return { text: '正在执行', kind: 'running' };
+  if (thread.historyAvailable === false) return { text: '历史不可用', kind: 'warning' };
+  if (thread.local === false && thread.historyAvailable === true) return { text: '工作目录不可用', kind: 'warning' };
   const value = thread.activity?.state;
   const states = { completed: ['已完成', 'completed'], interrupted: ['已中断', 'warning'], failed: ['失败', 'warning'],
     unconfirmed: ['执行状态未确认', 'neutral'], idle: ['空闲', 'neutral'] };

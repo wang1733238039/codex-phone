@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { openSync, closeSync, readSync, statSync, realpathSync } from 'node:fs';
-import { relative, join, isAbsolute, sep } from 'node:path';
+import { resolveRollout, rolloutTail } from './rollout.mjs';
 
 // A bounded, read-only projection. No message content leaves this module.
 export function summarizeActivity(lines) {
@@ -33,23 +32,14 @@ export function summarizeActivity(lines) {
 export class ActivityIndex {
   constructor(home) { this.home = home; this.cache = new Map(); }
   read(row) {
+    let signature, historyStart;
     try {
-      const path = realpathSync.native(row.rollout_path);
-      const allowed = ['sessions', 'archived_sessions'].some(folder => {
-        const rel = relative(join(this.home, folder), path);
-        return rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-      });
-      if (!allowed) return { state: 'unknown' };
-      const historyStart = row.phone_child_history_start || 0;
-      const stat = statSync(path), signature = `${path}:${stat.size}:${stat.mtimeMs}:${historyStart}`;
+      const storage = resolveRollout(this.home, row.rollout_path), { path, stat } = storage;
+      historyStart = row.phone_child_history_start || 0;
+      signature = `${path}:${stat.size}:${stat.mtimeMs}:${historyStart}`;
       if (this.cache.get(row.id)?.signature === signature) return this.cache.get(row.id).activity;
-      const fd = openSync(path, 'r'), offset = Math.max(historyStart, stat.size - 1024 * 1024);
-      let text;
-      try {
-        const bytes = Buffer.alloc(Math.max(0, Math.min(stat.size - offset, 1024 * 1024)));
-        text = bytes.subarray(0, readSync(fd, bytes, 0, bytes.length, offset)).toString('utf8');
-      } finally { closeSync(fd); }
-      if (offset > historyStart) text = text.slice(text.indexOf('\n') + 1);
+      let { text, partialFirst } = rolloutTail(storage, historyStart);
+      if (partialFirst) text = text.slice(text.indexOf('\n') + 1);
       const lines = text.split('\n');
       // Ignore a partial final JSON record while the desktop is writing it.
       if (!text.endsWith('\n')) lines.pop();
@@ -64,6 +54,10 @@ export class ActivityIndex {
       if (!activity.resultKey && prior?.resultKey) { activity.resultKey = prior.resultKey; activity.resultAt = prior.resultAt; }
       this.cache.set(row.id, { signature, activity, historyStart });
       return activity;
-    } catch { return { state: 'unknown' }; }
+    } catch {
+      const activity = { state: 'unknown' };
+      if (signature) this.cache.set(row.id, { signature, activity, historyStart });
+      return activity;
+    }
   }
 }

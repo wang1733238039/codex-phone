@@ -465,7 +465,7 @@ function updateComposer() {
     PhoneAttachments.identity(p.submitted, p.attachmentIds) === PhoneAttachments.identity($('message').value, attachmentIds));
   const child = childReadOnly();
   $('composer-wrap').hidden = child; $('child-readonly').hidden = !child;
-  let reason = child ? '子对话当前仅支持查看，请返回主对话发送指令' : !PhoneAccounts.active() ? '套餐已到期，请在账户页查看续期说明；草稿可以继续写' : !d ? '正在读取会话' : !s.online ? '电脑离线，联网后才能发送；草稿可以继续写' : !s.controls ? '当前为只读模式' : d.thread.archived ? '已归档，请先在桌面恢复会话' : !d.thread.local ? '此会话不在本机，只能查看' : sending ? '正在提交…' : duplicate ? '相同消息结果待确认，先核对，避免重复执行' : '';
+  let reason = child ? '子对话当前仅支持查看，请返回主对话发送指令' : !PhoneAccounts.active() ? '套餐已到期，请在账户页查看续期说明；草稿可以继续写' : !d ? '正在读取会话' : !s.online ? '电脑离线，联网后才能发送；草稿可以继续写' : !s.controls ? '当前为只读模式' : d.thread.archived ? '已归档，请先在桌面恢复会话' : !d.thread.local ? d.thread.unavailableReason || '此会话不在本机，只能查看' : sending ? '正在提交…' : duplicate ? '相同消息结果待确认，先核对，避免重复执行' : '';
   // A running/unknown/offline turn must never prevent writing the next draft.
   // Submission is checked separately so drafting does not imply permission to execute.
   $('message').disabled = !state.selected || child;

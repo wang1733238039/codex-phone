@@ -1,12 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readdirSync, readFileSync, createReadStream, realpathSync, existsSync, statSync } from 'node:fs';
-import { join, relative, isAbsolute, sep } from 'node:path';
-import { createInterface } from 'node:readline';
+import { readdirSync, readFileSync, realpathSync, existsSync, statSync } from 'node:fs';
+import { join, isAbsolute } from 'node:path';
 import { Transcript } from './transcript.mjs';
 import { resolveSidebar } from './sidebar.mjs';
 import { ActivityIndex } from './activity.mjs';
 import { localFamily, threadSource, validThreadId } from './thread-family.mjs';
 import { PhoneChildren } from './phone-children.mjs';
+import { resolveRollout, rolloutLines } from './rollout.mjs';
 export { validThreadId } from './thread-family.mjs';
 
 export class LocalSource {
@@ -35,21 +35,26 @@ export class LocalSource {
       const allRows = this.phoneChildren.decorate(this.db.prepare('SELECT * FROM threads ORDER BY updated_at DESC').all());
       const { roots: rows, children } = localFamily(allRows, read('thread_spawn_edges'));
       const { sidebar, threadFields } = resolveSidebar(rows, { projects: read('projects'), roots: read('project_roots'), sections: read('thread_sections'), settings, home: this.home });
-      const projectRow = r => ({
+      const projectRow = r => {
+        const historyAvailable = this.historyAvailable(r), local = this.isLocal(r);
+        return {
         id: r.id, title: r.name || r.title || '未命名会话', preview: (r.preview || r.first_user_message || '').slice(0, 250),
         cwd: r.cwd, createdAt: r.created_at_ms || r.created_at * 1000,
         updatedAt: r.recency_at_ms || r.updated_at_ms || r.updated_at * 1000,
         archived: Boolean(r.archived), ...threadFields.get(r.id), model: r.model || '',
         provider: r.model_provider || '', source: r.source || '',
-        local: this.isLocal(r),
+        local, historyAvailable,
+        ...(!local ? { unavailableReason: historyAvailable
+          ? '原工作目录不可用，只能查看历史；请先在电脑恢复该目录'
+          : '会话历史文件不可用，请在电脑核对记录是否完整' } : {}),
         activity: this.activity.read(r),
-      });
+      }; };
       const childThreads = children.map(r => ({
         ...projectRow(r), title: (r.name || r.agent_nickname || r.title || '子对话').slice(0, 160),
         projectId: threadFields.get(r.rootThreadId)?.projectId || null,
         projectName: threadFields.get(r.rootThreadId)?.projectName || null,
         parentThreadId: r.parentThreadId, rootThreadId: r.rootThreadId, depth: r.depth, readOnly: !this.isLocal(r) || Boolean(r.archived),
-        historyAvailable: Boolean(r.rollout_path && existsSync(r.rollout_path)),
+        historyAvailable: this.historyAvailable(r),
       }));
       const counts = new Map();
       for (const child of childThreads) counts.set(child.rootThreadId, (counts.get(child.rootThreadId) || 0) + 1);
@@ -57,7 +62,13 @@ export class LocalSource {
       return { threads, childThreads, sidebar };
     } finally { this.db.exec('ROLLBACK'); }
   }
-  isLocal(row) { return Boolean(row.cwd && isAbsolute(row.cwd) && existsSync(row.cwd) && row.rollout_path && existsSync(row.rollout_path)); }
+  historyAvailable(row) {
+    try { resolveRollout(this.home, row.rollout_path); return true; } catch { return false; }
+  }
+  isLocal(row) {
+    try { return Boolean(row.cwd && isAbsolute(row.cwd) && statSync(row.cwd).isDirectory() && this.historyAvailable(row)); }
+    catch { return false; }
+  }
   row(id) {
     if (!validThreadId(id)) throw new Error('Invalid thread ID');
     const row = this.db.prepare('SELECT * FROM threads WHERE id=?').get(id);
@@ -73,32 +84,20 @@ export class LocalSource {
   }
   async detail(id) {
     const row = this.row(id);
-    if (!row.rollout_path || !existsSync(row.rollout_path)) throw new Error('会话文件不在此电脑，无法读取该历史');
-    const path = realpathSync.native(row.rollout_path);
-    const allowed = ['sessions', 'archived_sessions'].some(folder => {
-      const rel = relative(join(this.home, folder), path);
-      return rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-    });
-    if (!allowed) throw new Error('Session path is outside the Codex session directories');
+    const storage = resolveRollout(this.home, row.rollout_path);
     const historyStart = row.phone_child_history_start;
-    const stat = statSync(path), signature = `${path}:${stat.size}:${stat.mtimeMs}:${historyStart ?? ''}`;
+    const { path, stat } = storage, signature = `${path}:${stat.size}:${stat.mtimeMs}:${historyStart ?? ''}`;
     const cached = this.cache.get(id);
     const cacheFresh = cached && cached.signature === signature &&
       (!cached.detail.running || Date.now() - cached.cachedAt < this.runningCacheTtlMs);
     if (cacheFresh) return { ...cached.detail };
-    if (stat.size > 256 * 1024 * 1024) throw new Error('会话文件超过 256 MB，暂不支持在手机读取');
     const child = this.isChild(row);
-    if (historyStart != null && stat.size < historyStart) throw new Error('子对话历史已重写，请在电脑核对后重新连接');
     const transcript = new Transcript(child && historyStart == null ? { childThreadId: id } : {});
-    const stream = createReadStream(path, { encoding: 'utf8', ...(historyStart != null ? { start: historyStart } : {}) });
-    const lines = createInterface({ input: stream, crlfDelay: Infinity });
-    try {
-      for await (const line of lines) {
-        let entry;
-        try { entry = JSON.parse(line); } catch { continue; }
-        transcript.push(entry);
-      }
-    } finally { lines.close(); stream.destroy(); }
+    for await (const line of rolloutLines(storage, { start: historyStart ?? 0 })) {
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      transcript.push(entry);
+    }
     const detail = { id, ...transcript.finish(), readAt: Date.now(), ...(child ? { readOnly: !this.isLocal(row) || Boolean(row.archived) } : {}) };
     this.cache.set(id, { signature, detail, cachedAt: Date.now() });
     if (this.cache.size > 12) this.cache.delete(this.cache.keys().next().value);
