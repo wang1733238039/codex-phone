@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { nativeRecentDetail } from '../src/native-history.mjs';
 import { Agent } from '../src/agent.mjs';
 import { randomUUID } from 'node:crypto';
+import { ResultFiles } from '../src/result-files.mjs';
 
 test('native recent history keeps the latest 15 visible messages without reasoning, tools or commentary', () => {
   const turns = Array.from({ length: 15 }, (_, i) => ({
@@ -33,7 +34,7 @@ function fixture(child = false) {
       calls.push({ method, params });
       return { data: [{ id: 'turn', status: 'completed', startedAt: 1793924793, completedAt: 1793924794,
         items: [{ type: 'agentMessage', phase: 'final_answer', text: '可见结果' }] }] };
-    } }, active: new Map(),
+    } }, active: new Map(), results: new ResultFiles(),
   });
   return { agent, id, calls };
 }

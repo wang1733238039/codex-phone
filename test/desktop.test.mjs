@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DesktopBridge } from '../src/desktop.mjs';
 import { Agent } from '../src/agent.mjs';
+import { ResultFiles } from '../src/result-files.mjs';
 
 const id = '11111111-1111-4111-8111-111111111111';
 function fixture() {
@@ -104,7 +105,8 @@ test('a slow runtime status lookup cannot block already-read conversation replie
   const detail = { id, messages: [{ role: 'assistant', phase: 'final_answer', text: '已完成的回复' }],
     running: false, turnStatus: 'completed', lastActivityAt: Date.now(), transcriptVersion: 2 };
   const agent = { config: { controlsEnabled: true, detailRuntimeTimeoutMs: 10 }, active: new Map(),
-    source: { detail: async () => detail }, runtime: async () => new Promise(() => {}), friendlyError: error => error.message };
+    source: { detail: async () => detail }, historyDetail: Agent.prototype.historyDetail, results: new ResultFiles(),
+    runtime: async () => new Promise(() => {}), friendlyError: error => error.message };
   const result = await Agent.prototype.handle.call(agent, 'detail', { threadId: id });
   assert.equal(result.messages[0].text, '已完成的回复');
   assert.equal(result.execution.verified, false);
@@ -114,7 +116,8 @@ test('overlapping transcript reads share a slow status lookup and publish a late
   let complete, lookups=0, notifications=0;
   const detail={id,messages:[{role:'assistant',phase:'final_answer',text:'visible reply'}],turnStatus:'completed'};
   const agent={config:{controlsEnabled:true,detailRuntimeTimeoutMs:100},active:new Map(),
-    source:{detail:async()=>detail},runtime:()=>{lookups++;return new Promise(resolve=>{complete=resolve;});},
+    source:{detail:async()=>detail},historyDetail:Agent.prototype.historyDetail,results:new ResultFiles(),
+    runtime:()=>{lookups++;return new Promise(resolve=>{complete=resolve;});},
     friendlyError:error=>error.message,changed:()=>notifications++};
   const results=await Promise.all([1,2,3].map(()=>Agent.prototype.handle.call(agent,'detail',{threadId:id})));
   assert.equal(lookups,1);

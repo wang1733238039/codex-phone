@@ -276,5 +276,5 @@ const PhoneAttachments = (() => {
     $('composer').addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) event.preventDefault(); });
     $('composer').addEventListener('drop', event => { if (event.dataTransfer?.files.length) { event.preventDefault(); if (!$('attach-button').disabled) add(event.dataTransfer.files); } });
   });
-  return { render, ids, blocked, current, accepted, identity, cards, reset };
+  return { render, ids, blocked, current, accepted, identity, cards, reset, preview: showPreview };
 })();

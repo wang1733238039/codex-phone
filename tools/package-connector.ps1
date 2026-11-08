@@ -5,7 +5,7 @@ $taskStage = Join-Path $taskRoot '.data/connector-package'
 $taskOutput = Join-Path $taskRoot 'public/downloads/codex-phone-agent.zip'
 $taskFiles = @(
     'src/agent.mjs', 'src/desktop.mjs', 'src/side-conversations.mjs', 'src/phone-children.mjs', 'src/rollout.mjs', 'src/native-history.mjs', 'src/config.mjs', 'src/codex.mjs', 'src/local-source.mjs', 'src/sidebar.mjs', 'src/transcript.mjs', 'src/activity.mjs', 'src/thread-family.mjs',
-    'src/attachment-common.mjs', 'src/agent-attachments.mjs',
+    'src/attachment-common.mjs', 'src/agent-attachments.mjs', 'src/result-files.mjs', 'src/result-references.mjs',
     'tools/pair.mjs', 'tools/remote-agent.mjs', 'tools/connector-status.mjs', 'tools/install-connector.mjs',
     'package.json', 'package-lock.json', 'README.md', 'start-remote-agent.ps1', 'start-remote-watch.ps1', 'install-remote-autostart.ps1',
     'connector-control.ps1', 'connector-task.ps1', 'run-remote-watch.vbs', 'install-connector-shortcuts.ps1',

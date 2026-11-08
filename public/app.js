@@ -29,6 +29,7 @@ async function api(path, data) {
 }
 function showLogin() {
   sessionEpoch++;
+  PhoneResults.reset();
   resetFamily(); state.readingViews.clear();
   PhoneAccounts.clear();
   $('new-thread-dialog').close(); state.resultSeen.clear(); state.resultReadAt.clear(); state.listReady = false; state.projects = [];
@@ -88,6 +89,7 @@ function saveCurrentView() {
 }
 async function switchDevice(deviceId, push = true, threadId) {
   if (!state.devices.some(d => d.id === deviceId)) return;
+  PhoneResults.reset();
   $('composer-settings-dialog').close(); $('send-mode').value = 'auto';
   saveCurrentView(); resetFamily(); clearTimeout(searchTimer); clearTimeout(refreshTimer); refreshTimer = null; clearTimeout(runningRefreshTimer); runningRefreshTimer = null;
   state.stream?.close(); state.listSeq++; state.detailSeq++; const seq = ++state.deviceSeq; detailBusy = false;
@@ -336,6 +338,7 @@ $('thread-list').addEventListener('click', event => {
 async function openThread(id, push = true) {
   if (!state.deviceId) return;
   if (id === state.selected) { await loadDetail(true); return; }
+  PhoneResults.reset();
   $('composer-settings-dialog').close(); $('send-mode').value = 'auto';
   if (state.selected) state.drafts.set(selectedKey(), $('message').value);
   rememberReadingPosition(); resetFamily(id);
@@ -350,7 +353,7 @@ async function openThread(id, push = true) {
   $('delivery-status').hidden = true; renderModels(); renderFamily(); renderList(); updateComposer();
   await Promise.all([loadDetail(true, !remembered), loadFamily()]);
 }
-function backToList() { $('composer-settings-dialog').close(); if (state.selected) state.drafts.set(selectedKey(), $('message').value); rememberReadingPosition(); resetFamily(); state.selected = null; state.detail = null; state.detailSeq++; detailBusy = false; state.pending = null; $('app-view').classList.remove('chat-open'); $('chat').hidden = true; $('welcome').hidden = false; renderList(); }
+function backToList() { PhoneResults.reset(); $('composer-settings-dialog').close(); if (state.selected) state.drafts.set(selectedKey(), $('message').value); rememberReadingPosition(); resetFamily(); state.selected = null; state.detail = null; state.detailSeq++; detailBusy = false; state.pending = null; $('app-view').classList.remove('chat-open'); $('chat').hidden = true; $('welcome').hidden = false; renderList(); }
 window.addEventListener('popstate', () => {
   const route = readRoute();
   if (route.deviceId && route.deviceId !== state.deviceId) switchDevice(route.deviceId, false, route.threadId).catch(e => notice(e.message));
@@ -409,8 +412,7 @@ function renderMessages(initial = false, prepended = false) {
     article.setAttribute('aria-label', message.role === 'user' ? '你的消息' : 'Codex 回复');
     meta.append(el('span', 'message-role', message.role === 'user' ? childReadOnly() ? '任务 · 指令' : '你 · 发送' : childReadOnly() ? '子 Agent · 回复' : 'Codex · 回复'), el('time', 'message-time', date(message.time, true)));
     if (message.role === 'assistant') {
-      body.innerHTML = DOMPurify.sanitize(marked.parse(message.text || '', { breaks: true }), { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'picture', 'video', 'audio', 'source', 'iframe', 'style', 'form', 'input', 'button', 'textarea'], FORBID_ATTR: ['style', 'src', 'srcset', 'id', 'name'] });
-      body.querySelectorAll('a').forEach(a => { if (!/^https?:\/\//i.test(a.getAttribute('href') || '')) { a.removeAttribute('href'); } else { a.target = '_blank'; a.rel = 'noopener noreferrer'; } });
+      PhoneResults.render(body, message);
     } else { body.textContent = message.text; body.hidden = !message.text?.trim(); }
     article.append(meta, body); if (message.role === 'user' && message.attachments?.length) article.append(PhoneAttachments.cards(message.attachments));
     if (message.role === 'assistant') {

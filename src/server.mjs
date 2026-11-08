@@ -12,6 +12,7 @@ import { ServerAttachments } from './server-attachments.mjs';
 import { CHUNK_BYTES } from './attachment-common.mjs';
 import { Accounts } from './accounts.mjs';
 import { isIP } from 'node:net';
+import { resultFileRoute, serveResultFile } from './server-results.mjs';
 
 const sha = s => createHash('sha256').update(s).digest('hex');
 const cookieName = 'codex_phone';
@@ -30,6 +31,7 @@ export function createApp(config) {
   const allowedHosts = new Set(config.allowedHosts || ['localhost', '127.0.0.1', '[::1]']);
   if (publicOrigin) allowedHosts.add(new URL(publicOrigin).hostname);
   const pending = new Map(), lateResponses = new Map(), listeners = new Map(), loginAttempts = new Map(), pairingAttempts = new Map(), agents = new Map();
+  const resultDownloads = new Map();
   let closing = false;
   let expiryTimer;
   const online = deviceId => {
@@ -184,6 +186,10 @@ export function createApp(config) {
     ['/children.js', ['public/children.js', 'text/javascript; charset=utf-8']],
     ['/children.css', ['public/children.css', 'text/css; charset=utf-8']],
     ['/attachments.js', ['public/attachments.js', 'text/javascript; charset=utf-8']],
+    ['/results.js', ['public/results.js', 'text/javascript; charset=utf-8']],
+    ['/results.css', ['public/results.css', 'text/css; charset=utf-8']],
+    ['/sheet-worker.js', ['public/sheet-worker.js', 'text/javascript; charset=utf-8']],
+    ['/vendor/xlsx.js', ['public/vendor/xlsx.full.min.js', 'text/javascript; charset=utf-8']],
     ['/accounts.js', ['public/accounts.js', 'text/javascript; charset=utf-8']],
     ['/accounts.css', ['public/accounts.css', 'text/css; charset=utf-8']],
     ['/styles.css', ['public/styles.css', 'text/css; charset=utf-8']],
@@ -205,7 +211,10 @@ export function createApp(config) {
       if (!allowedHosts.has(host)) throw new HttpError(403, '此访问域名未配置，请设置 publicUrl 或 allowedHosts');
       if (req.method === 'GET' && staticFiles.has(url.pathname)) {
         const [path, type] = staticFiles.get(url.pathname);
-        headers(res, type); res.end(readFileSync(resolve(ROOT, path))); return;
+        headers(res, type);
+        if (url.pathname === '/vendor/xlsx.js' && url.searchParams.get('v') === '0.20.3')
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.end(readFileSync(resolve(ROOT, path))); return;
       }
       if (req.method === 'GET' && url.pathname === '/healthz') { json(res, 200, { ok: true }); return; }
       if (req.method === 'POST' && url.pathname === '/api/device-pairings/claim') {
@@ -429,6 +438,19 @@ export function createApp(config) {
         const family = validThreadId(familyId) && store.family(familyId, deviceId);
         if (!family) throw new HttpError(404, '找不到此会话');
         json(res, 200, { ...family, ...status(deviceId) }); return;
+      }
+      const resultRoute = resultFileRoute(route);
+      if (req.method === 'GET' && resultRoute) {
+        const [, threadId, id, content] = resultRoute;
+        if (!store.thread(threadId, deviceId)) throw new HttpError(404, '找不到此会话');
+        accounts.requireActive(ownerId);
+        if (!online(deviceId)) throw new HttpError(503, '电脑已离线，文件仍保留在电脑，上线后可打开');
+        if (!status(deviceId).capabilities.resultFiles) throw new HttpError(409, '此电脑需要升级连接程序至 0.6.12 才能打开返回文件');
+        if ((resultDownloads.get(ownerId) || 0) >= 4) throw new HttpError(429, '正在读取其他文件，请稍后重试');
+        resultDownloads.set(ownerId, (resultDownloads.get(ownerId) || 0) + 1);
+        try { await serveResultFile({ req, res, headers, json, ask, deviceId, threadId, id, content, url }); }
+        finally { resultDownloads.set(ownerId, Math.max(0, (resultDownloads.get(ownerId) || 1) - 1)); }
+        return;
       }
       const attachmentRoute = route.match(/^\/api\/threads\/([a-f\d-]+)\/attachments(?:\/([a-f\d-]+)(?:\/(complete|sync|content))?)?$/i);
       if (attachmentRoute) {

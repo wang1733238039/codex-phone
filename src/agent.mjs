@@ -12,11 +12,13 @@ import { AgentAttachments } from './agent-attachments.mjs';
 import { buildInputs, attachmentText } from './attachment-common.mjs';
 import { DesktopBridge } from './desktop.mjs';
 import { nativeRecentDetail } from './native-history.mjs';
+import { ResultFiles } from './result-files.mjs';
 
 export class Agent {
   constructor(config) {
     this.config = config; this.source = new LocalSource(config.codexHome); this.codex = new CodexClient(config);
     this.attachments = new AgentAttachments(config);
+    this.results = new ResultFiles(threadId => this.resultContext(threadId), config);
     this.ws = null; this.stopped = false; this.active = new Map(); this.approvals = new Map(); this.inflight = new Set(); this.changedTimers = new Map(); this.reconnectCount = 0;
     this.queuedHere = new Map(); this.turnState = new Map(); this.modelCache = null; this.reading = 0;
     this.desktop = new DesktopBridge(config, id => { this.changed(id); this.state(); });
@@ -37,7 +39,7 @@ export class Agent {
   snapshot() {
     this.discoverSideConversations().catch(() => {});
     try { this.send({ type: 'snapshot', ...this.combinedSnapshot(), info: { computer: this.config.computerName || hostname(), controls: Boolean(this.config.controlsEnabled),
-      version: '0.6.11', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true } },
+      version: '0.6.12', desktop: this.desktop.status, capabilities: { queue: true, models: true, executionStatus: true, steer: true, attachments: true, createThread: true, activity: true, desktopControl: true, childThreads: true, childControls: true, resultFiles: true } },
       activeTurns: this.activeTurns(), approvals: [...this.approvals.values(), ...this.desktop.approvals.values()].map(p => p.public) }); }
     catch (error) { console.error('Local index unavailable:', error.message); }
   }
@@ -75,7 +77,7 @@ export class Agent {
   async handleSide(action, data) {
     const state = await this.desktop.read(data.threadId, true);
     if (!state || !this.sideState(data.threadId)) throw new Error('桌面临时侧栏已关闭或连接中断，请回到主对话刷新');
-    if (action === 'detail') return { ...sideDetail(state), ...this.desktop.runtime(data.threadId, state), queue: [], queueKnown: true };
+    if (action === 'detail') return this.results.descriptors(data.threadId, { ...sideDetail(state), ...this.desktop.runtime(data.threadId, state), queue: [], queueKnown: true });
     if (!this.config.controlsEnabled) throw new Error('电脑连接程序未开启操作权限');
     if (['attachment-start', 'attachment-chunk', 'attachment-finish'].includes(action)) return this.attachments[action.slice(11)](data);
     if (action === 'stop') return this.desktop.stop(data.threadId, data.turnId);
@@ -187,24 +189,40 @@ export class Agent {
       settings: { model: runtime?.model || '', effort: runtime?.reasoningEffort || '' },
       ...(desktopState ? this.desktop.runtime(threadId, desktopState) : {}) };
   }
+  async historyDetail(threadId) {
+    try { return await this.source.detail(threadId); }
+    catch (error) {
+      const row = this.source.row(threadId);
+      if (error.code !== 'ROLLOUT_TOO_LARGE' || this.source.isChild(row)) throw error;
+      this.reading++; clearTimeout(this.idleTimer);
+      try {
+        await this.codex.start();
+        const page = await this.codex.call('thread/turns/list', {
+          threadId, limit: 15, sortDirection: 'desc', itemsView: 'full',
+        }, 10000);
+        return nativeRecentDetail(threadId, page.data || []);
+      } finally { this.reading--; this.releaseWhenIdle(); }
+    }
+  }
+  async resultContext(threadId) {
+    const side = this.sideState(threadId);
+    if (side) {
+      const current = await this.desktop.read(threadId, true);
+      if (!current || !this.sideState(threadId)) throw new Error('桌面侧栏已关闭，请回到主对话读取文件');
+      return { detail: sideDetail(current), cwd: this.source.row(sideParent(current)).cwd };
+    }
+    return { detail: await this.historyDetail(threadId), cwd: this.source.row(threadId).cwd };
+  }
   async handle(action, data) {
+    if (['result-file-info', 'result-file-chunk'].includes(action)) {
+      if (!validThreadId(data.threadId)) throw new Error('会话编号无效');
+      return action === 'result-file-info' ? this.results.info(data) : this.results.chunk(data);
+    }
     if (validThreadId(data.threadId) && this.sideState?.(data.threadId)) return this.handleSide(action, data);
     if (action === 'create-thread') return this.createThread(data);
     if (action === 'detail') {
-      let detail;
-      try { detail = await this.source.detail(data.threadId); }
-      catch (error) {
-        const row = this.source.row(data.threadId);
-        if (error.code !== 'ROLLOUT_TOO_LARGE' || this.source.isChild(row)) throw error;
-        this.reading++; clearTimeout(this.idleTimer);
-        try {
-          await this.codex.start();
-          const page = await this.codex.call('thread/turns/list', {
-            threadId: data.threadId, limit: 15, sortDirection: 'desc', itemsView: 'full',
-          }, 10000);
-          detail = nativeRecentDetail(data.threadId, page.data || []);
-        } finally { this.reading--; this.releaseWhenIdle(); }
-      }
+      const history = await this.historyDetail(data.threadId);
+      const detail = this.results.descriptors(data.threadId, history);
       if (detail.readOnly) return { ...detail, execution: { state: detail.running ? 'unconfirmed' : detail.turnStatus, verified: false, lastActivityAt: detail.lastActivityAt } };
       detail.ownedTurn = this.active.get(data.threadId) || null;
       if (!this.config.controlsEnabled) return detail;

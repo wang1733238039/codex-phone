@@ -11,6 +11,15 @@ by the web server.
 
 Dependency licenses below apply to their respective packages. This list is based on package-lock.json; versions and full notices are retained here.
 
+## SheetJS Community Edition 0.20.3 — Apache-2.0
+
+The unmodified standalone browser distribution is vendored at
+`public/vendor/xlsx.full.min.js`. Copyright (C) 2013-present SheetJS.
+Official distribution: `https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js`.
+The full license is retained at `public/vendor/SHEETJS-LICENSE.txt`.
+It is loaded only in the spreadsheet preview worker; connector packages do not
+include or require this browser library.
+
 ## dompurify 3.4.17 - (MPL-2.0 OR Apache-2.0)
 
 Apache License

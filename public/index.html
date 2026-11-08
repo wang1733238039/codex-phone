@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/conversation.css">
   <link rel="stylesheet" href="/children.css">
   <link rel="stylesheet" href="/accounts.css">
+  <link rel="stylesheet" href="/results.css">
   <title>Codex 随行</title>
 </head>
 <body>
@@ -241,10 +242,20 @@
       <a id="attachment-preview-download" class="secondary" download>下载原图</a>
     </footer>
   </dialog>
+  <dialog id="result-preview-dialog" class="result-preview-dialog" aria-labelledby="result-preview-title">
+    <header class="result-preview-header">
+      <div class="result-preview-heading"><h2 id="result-preview-title">文件与表格</h2><p id="result-preview-name"></p><p id="result-preview-note" role="status"></p></div>
+      <form method="dialog"><button class="icon-button" aria-label="关闭文件预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
+    </header>
+    <label id="result-sheet-label" class="result-sheet-label" for="result-sheet-select" hidden>工作表<select id="result-sheet-select"></select></label>
+    <div id="result-preview-body" class="result-preview-body" tabindex="0" aria-label="文件预览内容"></div>
+    <footer class="result-preview-actions"><button id="result-preview-retry" class="secondary" type="button" hidden>重试</button><a id="result-preview-download" class="primary" download>下载原文件</a></footer>
+  </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="/vendor/marked.js" defer></script>
   <script src="/vendor/purify.js" defer></script>
   <script src="/attachments.js" defer></script>
+  <script src="/results.js" defer></script>
   <script src="/inbox.js" defer></script>
   <script src="/children.js" defer></script>
   <script src="/accounts.js" defer></script>
